@@ -1,6 +1,8 @@
 *.csv
 *.json
 .env
+1-out-of-10/
+
 
 # IDE
 .idea/
@@ -15,4 +17,3 @@ Thumbs.db
 __pycache__/
 *.pyc
 .venv/
-1-out-of-10.py
