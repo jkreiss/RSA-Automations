@@ -1,3 +1,18 @@
 *.csv
 *.json
 .env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+1-out-of-10.py
