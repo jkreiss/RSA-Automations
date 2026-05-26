@@ -4,6 +4,7 @@ import re
 import math
 import json
 import requests
+from datetime import datetime
 
 # ================================================================
 # === $60 Boxes = $33 Cost (Cases 9@30 and 1@60)
@@ -22,13 +23,13 @@ EXCLUDE_TYPES = ['']
 MINIMUM_COST = 0.0                 # per-item min (None = no limit)
 MAXIMUM_COST = 0.0                 # per-item max (None = no limit)
 
-COUNT_VARIANCE = 0.0             # ±20% allowed around NUM_ITEMS
+COUNT_VARIANCE = 0.0                # ±20% allowed around NUM_ITEMS
 AVG_TOLERANCE = 0.10                # ±10% around DESIRED_AVG_COST_PER_ITEM
-COST_VARIANCE = 2.5                 # ±150%
-ATTEMPTS = 200                      # attempts to find a valid list
+COST_VARIANCE = 1.5                 # ±150%
+ATTEMPTS = 1                       # attempts to find a valid list
 SWAP_TRIES = 800                    # swaps per attempt to tune average
 RANDOM_SEED = None                  # int for reproducibility, else None
-N8N_WEBHOOK_URL = "http://localhost:5678/webhook/f5986e63-7897-4e92-a794-86009334f273"
+N8N_WEBHOOK_URL = "http://localhost:5678/webhook-test/f5986e63-7897-4e92-a794-86009334f273"
 # ================================================================
 
 
@@ -148,9 +149,9 @@ def generate_random_list(filename=FILE,
 
     # Optional per-item rails
     # if (minimum_cost is not None) or (maximum_cost is not None):
-    # TODO: ASK IF HE WANTS $0.0 THINGS INCLUDED OR EXCLUDED
-    min_c = 0 if minimum_cost is None else float(minimum_cost)
-    max_c = desired_avg_cost_per_item * cost_variance if not maximum_cost else float(maximum_cost)
+    cost_window = desired_avg_cost_per_item * cost_variance
+    min_c = desired_avg_cost_per_item - cost_window if minimum_cost is None else float(minimum_cost)
+    max_c = desired_avg_cost_per_item + cost_window if not maximum_cost else float(maximum_cost)
     df = df[df['Cost Per Item'].between(min_c, max_c)]
 
     if df.empty:
@@ -170,13 +171,12 @@ def generate_random_list(filename=FILE,
     low_avg = desired_avg_cost_per_item * (1 - avg_tolerance)
     high_avg = desired_avg_cost_per_item * (1 + avg_tolerance)
 
-    print(f"\n{df.shape[0]} total items matching all criteria.", flush=True)
-    print(df.head(), df.shape, df['Cost Per Item'].head())
-    print(f"Pool cost min/mean/max: ${df['Cost Per Item'].min():.2f} / "
+    print(f"\n{df.shape[0]} total items matching all criteria", flush=True)
+    print(f"Allowed costs pool based on Cost Variance: min/max ${min_c} / ${max_c}", flush=True)
+    print(f"Actual costs pool: min/mean/max: ${df['Cost Per Item'].min():.2f} / "
           f"${df['Cost Per Item'].mean():.2f} / ${df['Cost Per Item'].max():.2f}", flush=True)
     print(f"Target count: {num_items} (allowed range: {min_items}–{max_items})", flush=True)
-    print(f"Window based on avg tolerance: ${low_avg:.2f} – ${high_avg:.2f}", flush=True)
-    print("___________________", flush=True)
+    print(f"Acceptable final average cost window based on tolerance: ${low_avg:.2f} – ${high_avg:.2f}", flush=True)
 
     def build_result(selected_indices):
         if not selected_indices:
@@ -200,7 +200,7 @@ def generate_random_list(filename=FILE,
                 })
 
             return {
-                "job_id": "JOB-001",
+                "job_id": "MYS" + datetime.now().strftime("%m%d%H%M"),
                 "items": items,
                 "summary": {
                     "skus": final_df["Variant Sku"].tolist(),
@@ -321,9 +321,9 @@ def generate_random_list(filename=FILE,
         if candidate:
             return candidate
 
-    print("\nNo valid list found within strict windows after all attempts.", flush=True)
-    print(f"Tried up to {ATTEMPTS} attempts across counts {min_items}–{max_items} "
-          f"with an average window of ${low_avg:.2f}–${high_avg:.2f}.", flush=True)
+    print("\nNo valid list found matching criteria.", flush=True)
+    print(f"Tried {ATTEMPTS} attempt(s) to find a minimum of {min_items} items and a maximum of {max_items} items\n"
+          f"Acceptable final average cost ${low_avg:.2f}–${high_avg:.2f}. \nAverage item cost {df['Cost Per Item'].mean():.2f} ", flush=True)
     return None
 
 
