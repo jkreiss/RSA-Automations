@@ -73,22 +73,22 @@ with st.sidebar:
     include_tags_raw = st.text_input(
         "Include Tags (comma separated)",
         value=", ".join([x for x in module.INCLUDE_TAGS if x]),
-        help="Only items containing at least one of these tags will be included. If left blank ALL are included (DEFAULT all)",
+        help="Only items containing at least one of these tags will be included, case sensitive. If left blank ALL are included (DEFAULT all)",
     )
     exclude_tags_raw = st.text_input(
         "Exclude Tags (comma separated)",
         value=", ".join([x for x in module.EXCLUDE_TAGS if x]),
-        help="Only items containing at least one of these tags will be excluded. If left blank NONE are excluded (DEFAULT none)",
+        help="Only items containing at least one of these tags will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
     include_types_raw = st.text_input(
         "Include Types (comma separated)",
         value=", ".join([x for x in module.INCLUDE_TYPES if x]),
-        help="Only items containing at least one of these types will be included. If left blank ALL are included (DEFAULT all)",
+        help="Only items containing at least one of these types will be included, case sensitive. If left blank ALL are included (DEFAULT all)",
     )
     exclude_types_raw = st.text_input(
         "Exclude Types (comma separated)",
         value=", ".join([x for x in module.EXCLUDE_TYPES if x]),
-        help="Only items containing at least one of these types will be excluded. If left blank NONE are excluded (DEFAULT none)",
+        help="Only items containing at least one of these types will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
     minimum_cost = st.number_input(
         "Minimum Cost",
