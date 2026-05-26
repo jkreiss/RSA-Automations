@@ -124,22 +124,33 @@ def generate_random_list(filename=FILE,
     df['Variant Sku'] = df['Variant Sku'].astype(str)
 
     # Tag filters
-    if include_tags:
-            tag_mask = pd.Series(False, index=df.index)
-            for tag in include_tags:
-                tag_mask |= df['Tags'].str.contains(tag, na=False, regex=True)
-            df = df[tag_mask]
+    if include_tags and include_types:
+        mask = pd.Series(False, index=df.index)
+        ty
+        for tag in include_tags:
+            mask |= df['Tags'].str.contains(tag, na=False, regex=True)
+        for type_val in include_types:
+            mask |= df['Type'].str.contains(type_val, na=False, regex=True)
+        df = df[mask]
+
+    elif include_tags:
+        tag_mask = pd.Series(False, index=df.index)
+        for tag in include_tags:
+            tag_mask |= df['Tags'].str.contains(tag, na=False, regex=True)
+        df = df[tag_mask]
+
+    elif include_types:
+        type_mask = pd.Series(False, index=df.index)
+        for type_val in include_types:
+            type_mask |= df['Type'].str.contains(type_val, na=False, regex=True)
+        df = df[type_mask]
 
     if exclude_tags:
         for tag in exclude_tags:
             if tag:
                 df = df[~df['Tags'].str.contains(tag, na=False, regex=True)]
 
-    if include_types:
-            type_mask = pd.Series(False, index=df.index)
-            for type_val in include_types:
-                type_mask |= df['Type'].str.contains(type_val, na=False, regex=True)
-            df = df[type_mask]
+
 
     if exclude_types:
         for type_val in exclude_types:
