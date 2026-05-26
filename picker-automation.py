@@ -125,26 +125,25 @@ def generate_random_list(filename=FILE,
 
     # Tag filters
     if include_tags:
-        for tag in include_tags:
-            if tag:
-                # pattern = f'(?i)\\b{re.escape(tag)}\\b'
-                df = df[df['Tags'].str.contains(tag, na=False, regex=True)]
+            tag_mask = pd.Series(False, index=df.index)
+            for tag in include_tags:
+                tag_mask |= df['Tags'].str.contains(tag, na=False, regex=True)
+            df = df[tag_mask]
+
     if exclude_tags:
         for tag in exclude_tags:
             if tag:
-                df = df[df['Tags'].str.contains(tag, na=False, regex=True)]
+                df = df[~df['Tags'].str.contains(tag, na=False, regex=True)]
 
     if include_types:
-        for type_val in include_types:
-            if type_val:
-                print(type_val)
-                # pattern = f'(?i)\\b{re.escape(type_val)}\\b'
-                df = df[df['Type'].str.contains(type_val, na=False, regex=True)]
+            type_mask = pd.Series(False, index=df.index)
+            for type_val in include_types:
+                type_mask |= df['Type'].str.contains(type_val, na=False, regex=True)
+            df = df[type_mask]
 
     if exclude_types:
         for type_val in exclude_types:
             if type_val:
-                # pattern = f'(?i)\\b{re.escape(type_val)}\\b'
                 df = df[~df['Type'].str.contains(type_val, na=False, regex=True)]
 
     # Optional per-item rails
