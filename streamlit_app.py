@@ -134,7 +134,7 @@ with st.sidebar:
         min_value=1,
         value=int(module.ATTEMPTS),
         step=5,
-        help="Maximum number of generation attempts before giving up. Only change if it keeps failing. (DEFAULT 200)",
+        help="Maximum number of generation attempts before giving up. Only change if it keeps failing. (DEFAULT 1)",
     )
     count_variance = count_variance_percent / 100.0
     avg_tolerance = avg_tolerance_percent / 100.0

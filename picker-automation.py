@@ -160,6 +160,8 @@ def generate_random_list(filename=FILE,
     # if (minimum_cost is not None) or (maximum_cost is not None):
     cost_window = desired_avg_cost_per_item * cost_variance
     min_c = desired_avg_cost_per_item - cost_window if minimum_cost is None else float(minimum_cost)
+    if min_c == 0:
+        min_c = 0.01
     max_c = desired_avg_cost_per_item + cost_window if not maximum_cost else float(maximum_cost)
     df = df[df['Cost Per Item'].between(min_c, max_c)]
 
