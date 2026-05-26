@@ -200,7 +200,9 @@ with col2:
                 ok = module.send_to_webhook(st.session_state.result)
                 if ok:
                     st.session_state.webhook_sent = True
-                    st.success("Lists Generated")
+                    st.success("Lists Generated \n\n"
+                               "Lists can then be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + result["job_id"] + "'")
+
                 else:
                     st.error("Something went wrong. \n\nThe lists may have still generated, check the drive for folder " + st.session_state.result["job_id"])
             except Exception as exc:
@@ -209,10 +211,10 @@ with col2:
 result = st.session_state.result
 if result:
     if st.session_state.webhook_sent:
-        st.info("Confirmed")
+        # st.info("Confirmed")
+        pass
     else:
-        st.warning(f"Review the items below, then click 'Confirm and generate lists' if acceptable. \n\n"
-                   f"Lists can then be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + result["job_id"] + "'")
+        st.warning(f"Review the items below, then click 'Confirm and generate lists' if acceptable. \n\n")
     st.subheader("Summary")
     if st.session_state.generation_log:
         st.text(st.session_state.generation_log)
