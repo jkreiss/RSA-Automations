@@ -126,7 +126,6 @@ def generate_random_list(filename=FILE,
     # Tag filters
     if include_tags and include_types:
         mask = pd.Series(False, index=df.index)
-        ty
         for tag in include_tags:
             mask |= df['Tags'].str.contains(tag, na=False, regex=True)
         for type_val in include_types:
