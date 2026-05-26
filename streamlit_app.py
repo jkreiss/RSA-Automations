@@ -201,7 +201,7 @@ with col2:
                 if ok:
                     st.session_state.webhook_sent = True
                     st.success("Lists Generated \n\n"
-                               "Lists can then be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + result["job_id"] + "'")
+                               "Lists can then be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
 
                 else:
                     st.error("Something went wrong. \n\nThe lists may have still generated, check the drive for folder " + st.session_state.result["job_id"])
