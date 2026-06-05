@@ -30,7 +30,7 @@ COST_VARIANCE = 1.5                 # ±150%
 ATTEMPTS = 1                       # attempts to find a valid list
 SWAP_TRIES = 800                    # swaps per attempt to tune average
 RANDOM_SEED = None                  # int for reproducibility, else None
-N8N_WEBHOOK_URL = "http://localhost:5678/webhook/f5986e63-7897-4e92-a794-86009334f273"
+N8N_WEBHOOK_URL = "http://n8n:5678/webhook/f5986e63-7897-4e92-a794-86009334f273"
 LOG_DIR = Path(__file__).with_name("logs")
 # ================================================================
 
