@@ -1,11 +1,8 @@
 import contextlib
 import importlib.util
 import io
-import json
 import pathlib
 import tempfile
-import uuid
-from urllib import request
 
 import pandas as pd
 import streamlit as st
@@ -151,6 +148,8 @@ if "webhook_sent" not in st.session_state:
     st.session_state.webhook_sent = False
 if "generation_log" not in st.session_state:
     st.session_state.generation_log = ""
+if "current_job_id" not in st.session_state:
+    st.session_state.current_job_id = None
 
 col1, col2 = st.columns(2)
 
@@ -163,10 +162,30 @@ with col1:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                 tmp_csv.write(uploaded_csv.getvalue())
                 csv_path = tmp_csv.name
+            job_id = module.generate_job_id()
+            st.session_state.current_job_id = job_id
+            module.log_event(
+                "streamlit_generate_clicked",
+                job_id=job_id,
+                uploaded_filename=uploaded_csv.name,
+                desired_avg_cost_per_item=float(desired_avg_cost),
+                num_items=int(num_items),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                include_types=include_types,
+                exclude_types=exclude_types,
+                minimum_cost=float(minimum_cost),
+                maximum_cost=float(maximum_cost),
+                count_variance=float(count_variance),
+                avg_tolerance=float(avg_tolerance),
+                attempts=int(attempts),
+                cost_variance=float(cost_variance),
+            )
             log_buffer = io.StringIO()
             with contextlib.redirect_stdout(log_buffer):
                 result = module.generate_random_list(
                     filename=csv_path,
+                    job_id=job_id,
                     desired_avg_cost_per_item=float(desired_avg_cost),
                     num_items=int(num_items),
                     include_tags=include_tags,
@@ -184,28 +203,41 @@ with col1:
             st.session_state.result = result
             st.session_state.webhook_sent = False
             if result:
+                module.log_event("streamlit_generate_succeeded", job_id=job_id)
                 st.success("Run generated.")
             else:
+                module.log_event("streamlit_generate_failed", level="error", job_id=job_id)
                 failure_message = st.session_state.generation_log or "Unexpected failure"
                 st.error("No valid list found with the current settings.")
                 st.text(failure_message)
         except Exception as exc:
+            module.log_event(
+                "streamlit_generate_exception",
+                level="error",
+                job_id=st.session_state.current_job_id,
+                error=str(exc),
+            )
             st.session_state.generation_log = f"Generation failed: {exc}"
             st.error(f"Generation failed: {exc}")
 
 with col2:
     if st.session_state.result:
         if st.button("Confirm and generate lists", use_container_width=True):
+            job_id = st.session_state.result["job_id"]
+            module.log_event("streamlit_confirm_clicked", job_id=job_id)
             try:
                 ok = module.send_to_webhook(st.session_state.result)
                 if ok:
+                    module.log_event("streamlit_confirm_succeeded", job_id=job_id)
                     st.session_state.webhook_sent = True
                     st.success("Lists Generated \n\n"
                                "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
 
                 else:
+                    module.log_event("streamlit_confirm_failed", level="error", job_id=job_id)
                     st.error("Something went wrong. \n\nThe lists may have still generated, check the drive for folder " + st.session_state.result["job_id"])
             except Exception as exc:
+                module.log_event("streamlit_confirm_exception", level="error", job_id=job_id, error=str(exc))
                 st.error(f"Webhook failed: {exc}")
 
 result = st.session_state.result

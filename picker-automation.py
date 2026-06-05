@@ -1,10 +1,11 @@
-import random
-import pandas as pd
-import re
-import math
 import json
-import requests
+import logging
+from pathlib import Path
+import random
 from datetime import datetime
+
+import pandas as pd
+import requests
 
 # ================================================================
 # === $60 Boxes = $33 Cost (Cases 9@30 and 1@60)
@@ -29,11 +30,65 @@ COST_VARIANCE = 1.5                 # ±150%
 ATTEMPTS = 1                       # attempts to find a valid list
 SWAP_TRIES = 800                    # swaps per attempt to tune average
 RANDOM_SEED = None                  # int for reproducibility, else None
-N8N_WEBHOOK_URL = "http://localhost:5678/webhook-test/f5986e63-7897-4e92-a794-86009334f273"
+N8N_WEBHOOK_URL = "http://localhost:5678/webhook/f5986e63-7897-4e92-a794-86009334f273"
+LOG_DIR = Path(__file__).with_name("logs")
 # ================================================================
 
 
+LOG_FORMATTER = logging.Formatter(
+    "%(asctime)s %(levelname)s %(name)s %(message)s",
+    "%Y-%m-%d %H:%M:%S",
+)
+STREAM_HANDLER = logging.StreamHandler()
+STREAM_HANDLER.setFormatter(LOG_FORMATTER)
+LOGGER_CACHE = {}
+
+
+def generate_job_id():
+    return "MYS" + datetime.now().strftime("%m%d%H%M")
+
+
+def get_log_file(job_id):
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return LOG_DIR / f"{job_id}.log"
+
+
+def get_logger(job_id):
+    if job_id not in LOGGER_CACHE:
+        logger = logging.getLogger(f"picker_automation.{job_id}")
+        logger.setLevel(logging.INFO)
+        logger.handlers.clear()
+
+        file_handler = logging.FileHandler(get_log_file(job_id))
+        file_handler.setFormatter(LOG_FORMATTER)
+        logger.addHandler(file_handler)
+        logger.addHandler(STREAM_HANDLER)
+        logger.propagate = False
+        LOGGER_CACHE[job_id] = logger
+
+    return LOGGER_CACHE[job_id]
+
+
+def log_event(event, level="info", **context):
+    payload = {"event": event, **context}
+    job_id = context.get("job_id") or "unknown_job"
+    getattr(get_logger(job_id), level)(json.dumps(payload, default=str, sort_keys=True))
+
+
+def emit_message(message, *, job_id=None, level="info"):
+    print(message, flush=True)
+    log_event("automation_message", level=level, job_id=job_id, message=message)
+
+
 def send_to_webhook(payload, webhook_url=N8N_WEBHOOK_URL, timeout_seconds=60):
+    job_id = payload.get("job_id")
+    log_event(
+        "webhook_started",
+        job_id=job_id,
+        webhook_url=webhook_url,
+        timeout_seconds=timeout_seconds,
+        item_count=len(payload.get("items", [])),
+    )
     try:
         resp = requests.post(
             webhook_url,
@@ -42,12 +97,18 @@ def send_to_webhook(payload, webhook_url=N8N_WEBHOOK_URL, timeout_seconds=60):
             timeout=timeout_seconds,
         )
         resp.raise_for_status()
-        print(f"Webhook POST succeeded ({resp.status_code}).", flush=True)
+        emit_message(f"Webhook POST succeeded ({resp.status_code}).", job_id=job_id)
         if resp.text:
-            print(f"Webhook response: {resp.text}", flush=True)
+            emit_message(f"Webhook response: {resp.text}", job_id=job_id)
+        log_event(
+            "webhook_succeeded",
+            job_id=job_id,
+            status_code=resp.status_code,
+        )
         return True
     except requests.RequestException as exc:
-        print(f"Webhook POST failed: {exc}", flush=True)
+        emit_message(f"Webhook POST failed: {exc}", job_id=job_id, level="error")
+        log_event("webhook_failed", level="error", job_id=job_id, error=str(exc))
         return False
 
 def decrement_inventory_in_csv(filename, items):
@@ -85,7 +146,8 @@ def generate_random_list(filename=FILE,
                          attempts=200,
                          cost_variance=COST_VARIANCE,
                          swap_tries=800,
-                         seed=RANDOM_SEED):
+                         seed=RANDOM_SEED,
+                         job_id=None):
 
     if exclude_types is None:
         exclude_types = EXCLUDE_TYPES
@@ -97,11 +159,34 @@ def generate_random_list(filename=FILE,
         include_tags = INCLUDE_TAGS
     if seed is not None:
         random.seed(seed)
+    if job_id is None:
+        job_id = generate_job_id()
+
+    log_event(
+        "automation_started",
+        job_id=job_id,
+        filename=filename,
+        desired_avg_cost_per_item=desired_avg_cost_per_item,
+        num_items=num_items,
+        minimum_cost=minimum_cost,
+        maximum_cost=maximum_cost,
+        include_tags=include_tags,
+        exclude_tags=exclude_tags,
+        include_types=include_types,
+        exclude_types=exclude_types,
+        count_variance=count_variance,
+        avg_tolerance=avg_tolerance,
+        attempts=attempts,
+        cost_variance=cost_variance,
+        swap_tries=swap_tries,
+        seed=seed,
+    )
 
     try:
         df = pd.read_csv(filename)
     except FileNotFoundError:
-        print(f"\nError: The file '{filename}' was not found.", flush=True)
+        emit_message(f"\nError: The file '{filename}' was not found.", job_id=job_id, level="error")
+        log_event("automation_failed", level="error", job_id=job_id, reason="file_not_found")
         return None
 
     # Standardize column names
@@ -109,10 +194,15 @@ def generate_random_list(filename=FILE,
 
     # Required columns
     required_columns = ['Tags', 'Cost Per Item', 'Variant Price',
-                        'Variant Compare At Price', 'Variant Sku', 'Title']
+                        'Variant Compare At Price', 'Variant Sku', 'Title', 'Type']
     missing_cols = [col for col in required_columns if col not in df.columns]
     if missing_cols:
-        print(f"\nError: Your CSV file is missing the following required columns: {missing_cols}", flush=True)
+        emit_message(
+            f"\nError: Your CSV file is missing the following required columns: {missing_cols}",
+            job_id=job_id,
+            level="error",
+        )
+        log_event("automation_failed", level="error", job_id=job_id, reason="missing_columns", missing_columns=missing_cols)
         return None
 
     # Clean types
@@ -166,7 +256,8 @@ def generate_random_list(filename=FILE,
     df = df[df['Cost Per Item'].between(min_c, max_c)]
 
     if df.empty:
-        print("\nNo items match your filters. Please adjust your criteria.", flush=True)
+        emit_message("\nNo items match your filters. Please adjust your criteria.", job_id=job_id, level="error")
+        log_event("automation_failed", level="error", job_id=job_id, reason="no_matching_items")
         return None
 
     # CRITICAL: keep a positional RangeIndex so .iloc and indices align everywhere
@@ -182,12 +273,32 @@ def generate_random_list(filename=FILE,
     low_avg = desired_avg_cost_per_item * (1 - avg_tolerance)
     high_avg = desired_avg_cost_per_item * (1 + avg_tolerance)
 
-    print(f"\n{df.shape[0]} total items matching all criteria", flush=True)
-    print(f"Allowed costs pool based on Cost Variance: min/max ${min_c} / ${max_c}", flush=True)
-    print(f"Actual costs pool: min/mean/max: ${df['Cost Per Item'].min():.2f} / "
-          f"${df['Cost Per Item'].mean():.2f} / ${df['Cost Per Item'].max():.2f}", flush=True)
-    print(f"Target count: {num_items} (allowed range: {min_items}–{max_items})", flush=True)
-    print(f"Acceptable final average cost window based on tolerance: ${low_avg:.2f} – ${high_avg:.2f}", flush=True)
+    emit_message(f"\n{df.shape[0]} total items matching all criteria", job_id=job_id)
+    emit_message(f"Allowed costs pool based on Cost Variance: min/max ${min_c} / ${max_c}", job_id=job_id)
+    emit_message(
+        f"Actual costs pool: min/mean/max: ${df['Cost Per Item'].min():.2f} / "
+        f"${df['Cost Per Item'].mean():.2f} / ${df['Cost Per Item'].max():.2f}",
+        job_id=job_id,
+    )
+    emit_message(f"Target count: {num_items} (allowed range: {min_items}–{max_items})", job_id=job_id)
+    emit_message(
+        f"Acceptable final average cost window based on tolerance: ${low_avg:.2f} – ${high_avg:.2f}",
+        job_id=job_id,
+    )
+    log_event(
+        "automation_pool_ready",
+        job_id=job_id,
+        filtered_item_count=int(df.shape[0]),
+        min_cost_allowed=min_c,
+        max_cost_allowed=max_c,
+        actual_cost_min=float(df['Cost Per Item'].min()),
+        actual_cost_mean=float(df['Cost Per Item'].mean()),
+        actual_cost_max=float(df['Cost Per Item'].max()),
+        min_items=min_items,
+        max_items=max_items,
+        low_avg=low_avg,
+        high_avg=high_avg,
+    )
 
     def build_result(selected_indices):
         if not selected_indices:
@@ -211,7 +322,7 @@ def generate_random_list(filename=FILE,
                 })
 
             return {
-                "job_id": "MYS" + datetime.now().strftime("%m%d%H%M"),
+                "job_id": job_id,
                 "items": items,
                 "summary": {
                     "skus": final_df["Variant Sku"].tolist(),
@@ -300,8 +411,9 @@ def generate_random_list(filename=FILE,
 
         return sel_idx
 
-    for _ in range(1, attempts + 1):
+    for attempt_number in range(1, attempts + 1):
         k = random.randint(min_items, max_items)
+        log_event("automation_attempt_started", job_id=job_id, attempt_number=attempt_number, target_count=k)
 
         # Build a unique set of k positions from df (no separate shuffled df)
         order = list(range(len(df)))
@@ -322,19 +434,51 @@ def generate_random_list(filename=FILE,
                 sel_idx.append(i)
 
         if len(sel_idx) < k:
+            log_event(
+                "automation_attempt_skipped",
+                job_id=job_id,
+                attempt_number=attempt_number,
+                reason="insufficient_unique_items",
+                selected_count=len(sel_idx),
+                target_count=k,
+            )
             continue
 
         cur_avg = df['Cost Per Item'].iloc[sel_idx].mean()
         if not (low_avg <= cur_avg <= high_avg):
-            sel_idx = improve_selection(sel_idx, k, desired_avg_cost_per_item, SWAP_TRIES)
+            sel_idx = improve_selection(sel_idx, k, desired_avg_cost_per_item, swap_tries)
 
         candidate = build_result(sel_idx)
         if candidate:
+            log_event(
+                "automation_succeeded",
+                job_id=job_id,
+                attempt_number=attempt_number,
+                item_count=candidate["summary"]["item_count"],
+                avg_cost=candidate["summary"]["avg_cost"],
+                total_cost=candidate["summary"]["total_cost"],
+            )
             return candidate
 
-    print("\nNo valid list found matching criteria.", flush=True)
-    print(f"Tried {ATTEMPTS} attempt(s) to find a minimum of {min_items} items and a maximum of {max_items} items\n"
-          f"Acceptable final average cost ${low_avg:.2f}–${high_avg:.2f}. \nAverage item cost {df['Cost Per Item'].mean():.2f} ", flush=True)
+    emit_message("\nNo valid list found matching criteria.", job_id=job_id, level="error")
+    emit_message(
+        f"Tried {attempts} attempt(s) to find a minimum of {min_items} items and a maximum of {max_items} items\n"
+        f"Acceptable final average cost ${low_avg:.2f}–${high_avg:.2f}. \nAverage item cost {df['Cost Per Item'].mean():.2f} ",
+        job_id=job_id,
+        level="error",
+    )
+    log_event(
+        "automation_failed",
+        level="error",
+        job_id=job_id,
+        reason="no_valid_list_found",
+        attempts=attempts,
+        min_items=min_items,
+        max_items=max_items,
+        low_avg=low_avg,
+        high_avg=high_avg,
+        actual_cost_mean=float(df['Cost Per Item'].mean()),
+    )
     return None
 
 
