@@ -16,6 +16,21 @@ def load_picker_module(script_path: str):
     spec.loader.exec_module(module)
     return module
 
+
+def build_email_payload(mode: str, shared_email: str, pick_email: str, listing_email: str, invoice_email: str):
+    if mode == "No email":
+        return {"pick": "", "listing": "", "invoice": ""}
+
+    if mode == "One email for all lists":
+        email = shared_email.strip()
+        return {"pick": email, "listing": email, "invoice": email}
+
+    return {
+        "pick": pick_email.strip(),
+        "listing": listing_email.strip(),
+        "invoice": invoice_email.strip(),
+    }
+
 def normalize_csv_candidates():
     candidates = sorted(str(p) for p in pathlib.Path(".").glob("*.csv"))
     return candidates if candidates else [""]
@@ -53,6 +68,23 @@ module = load_picker_module(default_script)
 with st.sidebar:
     st.header("Inputs")
     uploaded_csv = st.file_uploader("FILE", type=["csv"], help="Upload the CSV with stock.")
+    email_mode = st.radio(
+        "Send lists to email",
+        options=["No email", "One email for all lists", "Separate email for each list"],
+        help="No emails will be sent unless ticked and input box filled in. If 'Separate email for each list' is chosen, only the filled out inputs will be sent.",
+    )
+    shared_email = ""
+    pick_email = ""
+    listing_email = ""
+    invoice_email = ""
+    if email_mode == "One email for all lists":
+        shared_email = st.text_input(
+            "Email",
+        )
+    elif email_mode == "Separate email for each list":
+        pick_email = st.text_input("Pick List Email")
+        listing_email = st.text_input("Listing List Email")
+        invoice_email = st.text_input("Invoice List Email")
     desired_avg_cost = st.number_input(
         "Average Cost of Item",
         min_value=0.0,
@@ -141,6 +173,7 @@ include_tags = [x.strip() for x in include_tags_raw.split(",") if x.strip()]
 exclude_tags = [x.strip() for x in exclude_tags_raw.split(",") if x.strip()]
 include_types = [x.strip() for x in include_types_raw.split(",") if x.strip()]
 exclude_types = [x.strip() for x in exclude_types_raw.split(",") if x.strip()]
+emails = build_email_payload(email_mode, shared_email, pick_email, listing_email, invoice_email)
 
 if "result" not in st.session_state:
     st.session_state.result = None
@@ -180,6 +213,7 @@ with col1:
                 avg_tolerance=float(avg_tolerance),
                 attempts=int(attempts),
                 cost_variance=float(cost_variance),
+                emails=emails,
             )
             log_buffer = io.StringIO()
             with contextlib.redirect_stdout(log_buffer):
@@ -198,6 +232,7 @@ with col1:
                     avg_tolerance=float(avg_tolerance),
                     attempts=int(attempts),
                     cost_variance=float(cost_variance),
+                    emails=emails,
                 )
             st.session_state.generation_log = log_buffer.getvalue().strip()
             st.session_state.result = result

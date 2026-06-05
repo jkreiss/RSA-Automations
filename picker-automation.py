@@ -147,7 +147,8 @@ def generate_random_list(filename=FILE,
                          cost_variance=COST_VARIANCE,
                          swap_tries=800,
                          seed=RANDOM_SEED,
-                         job_id=None):
+                         job_id=None,
+                         emails=None):
 
     if exclude_types is None:
         exclude_types = EXCLUDE_TYPES
@@ -180,7 +181,17 @@ def generate_random_list(filename=FILE,
         cost_variance=cost_variance,
         swap_tries=swap_tries,
         seed=seed,
+        emails=emails,
     )
+
+    if emails is None:
+        emails = {"pick": "", "listing": "", "invoice": ""}
+    else:
+        emails = {
+            "pick": emails.get("pick") or "",
+            "listing": emails.get("listing") or "",
+            "invoice": emails.get("invoice") or "",
+        }
 
     try:
         df = pd.read_csv(filename)
@@ -323,6 +334,7 @@ def generate_random_list(filename=FILE,
 
             return {
                 "job_id": job_id,
+                "emails": emails,
                 "items": items,
                 "summary": {
                     "skus": final_df["Variant Sku"].tolist(),
