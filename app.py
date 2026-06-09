@@ -122,13 +122,13 @@ with st.sidebar:
     minimum_cost = st.number_input(
         "Minimum Cost",
         value=float(module.MINIMUM_COST),
-        step=10.0,
+        step=1.0,
         help="Lowest allowed cost for an individual item. (DEFAULT 0)",
     )
     maximum_cost = st.number_input(
         "Maximum Cost",
         value=float(module.MAXIMUM_COST),
-        step=10.0,
+        step=1.0,
         help="Highest allowed cost for an individual item. (DEFAULT Infinity)",
     )
     count_variance_percent = st.slider(
