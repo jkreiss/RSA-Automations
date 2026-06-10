@@ -39,8 +39,6 @@ LOG_FORMATTER = logging.Formatter(
     "%(asctime)s %(levelname)s %(name)s %(message)s",
     "%Y-%m-%d %H:%M:%S",
 )
-STREAM_HANDLER = logging.StreamHandler()
-STREAM_HANDLER.setFormatter(LOG_FORMATTER)
 LOGGER_CACHE = {}
 
 
@@ -62,7 +60,6 @@ def get_logger(job_id):
         file_handler = logging.FileHandler(get_log_file(job_id))
         file_handler.setFormatter(LOG_FORMATTER)
         logger.addHandler(file_handler)
-        logger.addHandler(STREAM_HANDLER)
         logger.propagate = False
         LOGGER_CACHE[job_id] = logger
 
@@ -82,6 +79,7 @@ def emit_message(message, *, job_id=None, level="info"):
 
 def send_to_webhook(payload, webhook_url=N8N_WEBHOOK_URL, timeout_seconds=60):
     job_id = payload.get("job_id")
+    serialized_payload = json.dumps(payload, default=str, sort_keys=True)
     log_event(
         "webhook_started",
         job_id=job_id,
@@ -92,7 +90,7 @@ def send_to_webhook(payload, webhook_url=N8N_WEBHOOK_URL, timeout_seconds=60):
     try:
         resp = requests.post(
             webhook_url,
-            data=json.dumps(payload),
+            data=serialized_payload,
             headers={"Content-Type": "application/json"},
             timeout=timeout_seconds,
         )
@@ -108,7 +106,23 @@ def send_to_webhook(payload, webhook_url=N8N_WEBHOOK_URL, timeout_seconds=60):
         return True
     except requests.RequestException as exc:
         emit_message(f"Webhook POST failed: {exc}", job_id=job_id, level="error")
-        log_event("webhook_failed", level="error", job_id=job_id, error=str(exc))
+        response_text = None
+        if exc.response is not None:
+            try:
+                response_text = exc.response.text
+            except Exception:
+                response_text = "<unavailable>"
+        log_event(
+            "webhook_failed",
+            level="error",
+            job_id=job_id,
+            error=str(exc),
+            webhook_url=webhook_url,
+            payload=payload,
+            payload_json=serialized_payload,
+            response_status_code=getattr(exc.response, "status_code", None),
+            response_text=response_text,
+        )
         return False
 
 def decrement_inventory_in_csv(filename, items):
