@@ -242,7 +242,7 @@ def generate_random_list(filename=FILE,
     if include_tags and include_types:
         mask = pd.Series(False, index=df.index)
         for tag in include_tags:
-            mask |= df['Tags'].str.contains(tag, na=False, regex=True)
+            mask &= df['Tags'].str.contains(tag, na=False, regex=True)
         for type_val in include_types:
             mask |= df['Type'].str.contains(type_val, na=False, regex=True)
         df = df[mask]
@@ -250,7 +250,7 @@ def generate_random_list(filename=FILE,
     elif include_tags:
         tag_mask = pd.Series(False, index=df.index)
         for tag in include_tags:
-            tag_mask |= df['Tags'].str.contains(tag, na=False, regex=True)
+            tag_mask &= df['Tags'].str.contains(tag, na=False, regex=True)
         df = df[tag_mask]
 
     elif include_types:
