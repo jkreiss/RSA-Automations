@@ -259,7 +259,21 @@ with col2:
     if st.session_state.result:
         if st.button("Confirm and generate lists", use_container_width=True):
             job_id = st.session_state.result["job_id"]
+            confirm_emails = build_email_payload(
+                email_mode,
+                shared_email,
+                pick_email,
+                listing_email,
+                invoice_email,
+            )
+            st.session_state.result["emails"] = confirm_emails
             module.log_event("streamlit_confirm_clicked", job_id=job_id)
+            module.log_event(
+                "streamlit_confirm_emails_added",
+                job_id=job_id,
+                email_mode=email_mode,
+                emails=confirm_emails,
+            )
             try:
                 ok = module.send_to_webhook(st.session_state.result)
                 if ok:
