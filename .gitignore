@@ -2,18 +2,15 @@
 *.json
 .env
 1-out-of-10/
+spreadsheets/
 
-
-# IDE
 .idea/
 .vscode/
 *.iml
 
-# OS noise
 .DS_Store
 Thumbs.db
 
-# Python
 __pycache__/
 *.pyc
 .venv/

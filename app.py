@@ -1,20 +1,26 @@
-import contextlib
-import importlib.util
-import io
-import pathlib
 import tempfile
 
 import pandas as pd
 import streamlit as st
 
-
-def load_picker_module(script_path: str):
-    spec = importlib.util.spec_from_file_location("picker_automation_module", script_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load script: {script_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from picker import results as picker_results
+from picker.logging_utils import generate_job_id, log_event
+from picker.runs import (
+    ATTEMPTS,
+    AVG_TOLERANCE,
+    COST_VARIANCE,
+    COUNT_VARIANCE,
+    DESIRED_AVG_COST_PER_ITEM,
+    EXCLUDE_TAGS,
+    EXCLUDE_TYPES,
+    INCLUDE_TAGS,
+    INCLUDE_TYPES,
+    MAXIMUM_COST,
+    MINIMUM_COST,
+    NUM_ITEMS,
+    generate_random_list,
+)
+from picker.webhook import send_to_webhook
 
 
 def build_email_payload(mode: str, shared_email: str, pick_email: str, listing_email: str, invoice_email: str):
@@ -31,9 +37,37 @@ def build_email_payload(mode: str, shared_email: str, pick_email: str, listing_e
         "invoice": invoice_email.strip(),
     }
 
-def normalize_csv_candidates():
-    candidates = sorted(str(p) for p in pathlib.Path(".").glob("*.csv"))
-    return candidates if candidates else [""]
+
+def format_money(value):
+    return "" if value is None else f"${value:.2f}"
+
+
+def build_selection_stats_table(stats):
+    if not stats:
+        return None
+
+    rows = [
+        ("Unique Player Titles", stats["unique_players"]),
+        ("Unique SKUs", stats["unique_skus"]),
+        ("Number of items that can be chosen from", stats["unique_capacity"]),
+        ("Average cost with parameters", format_money(stats["best_possible_avg"])),
+        ("Allowed Item Range", f"{stats['min_items']} - {stats['max_items']}"),
+        ("Allowed Average Range", f"\${stats['low_avg']:.2f} - \${stats['high_avg']:.2f}"),
+        ("Pool Average Cost", format_money(stats["pool_avg"])),
+        ("Pool Min/Max Costs", f"\${stats['pool_min_cost']:.2f} - \${stats['pool_max_cost']:.2f}"),
+        ("Enough Items", "Yes" if stats["count_possible"] else "No"),
+        ("Average Possible For Requested Count", "Yes" if stats["avg_possible_for_requested_count"] else "No"),
+    ]
+    return pd.DataFrame(rows, columns=["Metric", "Value"])
+
+
+def render_generation_failure(failure):
+    error = failure["error"]
+    st.error(error["message"])
+    stats_table = build_selection_stats_table(failure.get("selection_stats"))
+    if stats_table is not None:
+        with st.expander("Selection stats", expanded=True):
+            st.table(stats_table)
 
 
 st.set_page_config(page_title="RSA Picker Automation", layout="wide")
@@ -62,12 +96,14 @@ If it fully breaks or you get unexpected errors, send me a message `kreissjason@
 """
     )
 
-default_script = "picker-automation.py"
-module = load_picker_module(default_script)
-
 with st.sidebar:
     st.header("Inputs")
     uploaded_csv = st.file_uploader("FILE", type=["csv"], help="Upload the CSV with stock.")
+    allow_duplicates = st.toggle(
+        "Allow duplicate SKUs",
+        value=False,
+        help="Allow the same SKU to be selected more than once, capped by Variant Inventory Qty.",
+    )
     email_mode = st.radio(
         "Send lists to email",
         options=["No email", "One email for all lists", "Separate email for each list"],
@@ -88,46 +124,46 @@ with st.sidebar:
     desired_avg_cost = st.number_input(
         "Average Cost of Item",
         min_value=0.0,
-        value=float(module.DESIRED_AVG_COST_PER_ITEM),
+        value=float(DESIRED_AVG_COST_PER_ITEM),
         step=1.0,
         help="Target average cost per selected item. (REQUIRED)",
     )
     num_items = st.number_input(
         "Number of Items",
         min_value=1,
-        value=int(module.NUM_ITEMS),
+        value=int(NUM_ITEMS),
         step=1,
         help="How many items the generated list should contain on average. (REQUIRED)",
     )
     include_tags_raw = st.text_input(
         "Include Tags (comma separated)",
-        value=", ".join([x for x in module.INCLUDE_TAGS if x]),
+        value=", ".join([x for x in INCLUDE_TAGS if x]),
         help="Only items containing at least one of these tags will be included, case sensitive. If left blank ALL are included (DEFAULT all)",
     )
     exclude_tags_raw = st.text_input(
         "Exclude Tags (comma separated)",
-        value=", ".join([x for x in module.EXCLUDE_TAGS if x]),
+        value=", ".join([x for x in EXCLUDE_TAGS if x]),
         help="Only items containing at least one of these tags will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
     include_types_raw = st.text_input(
         "Include Types (comma separated)",
-        value=", ".join([x for x in module.INCLUDE_TYPES if x]),
+        value=", ".join([x for x in INCLUDE_TYPES if x]),
         help="Only items containing at least one of these types will be included, case sensitive. If left blank ALL are included (DEFAULT all)",
     )
     exclude_types_raw = st.text_input(
         "Exclude Types (comma separated)",
-        value=", ".join([x for x in module.EXCLUDE_TYPES if x]),
+        value=", ".join([x for x in EXCLUDE_TYPES if x]),
         help="Only items containing at least one of these types will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
     minimum_cost = st.number_input(
         "Minimum Cost",
-        value=float(module.MINIMUM_COST),
+        value=float(MINIMUM_COST),
         step=1.0,
         help="Lowest allowed cost for an individual item. (DEFAULT 0)",
     )
     maximum_cost = st.number_input(
         "Maximum Cost",
-        value=float(module.MAXIMUM_COST),
+        value=float(MAXIMUM_COST),
         step=1.0,
         help="Highest allowed cost for an individual item. (DEFAULT Infinity)",
     )
@@ -135,7 +171,7 @@ with st.sidebar:
         "Count Variance",
         min_value=0,
         max_value=100,
-        value=int(round(float(module.COUNT_VARIANCE) * 100)),
+        value=int(round(float(COUNT_VARIANCE) * 100)),
         step=5,
         format="%d%%",
         help="How far the final number of items can deviate from the target average. (DEFAULT 0%)",
@@ -144,7 +180,7 @@ with st.sidebar:
         "Average Tolerance",
         min_value=0,
         max_value=100,
-        value=int(round(float(module.AVG_TOLERANCE) * 100)),
+        value=int(round(float(AVG_TOLERANCE) * 100)),
         step=5,
         format="%d%%",
         help="How far the final average cost can deviate from desired average cost. (DEFAULT 10%)",
@@ -153,7 +189,7 @@ with st.sidebar:
         "Cost Variance",
         min_value=0,
         max_value=300,
-        value=int(round(float(module.COST_VARIANCE) * 100)),
+        value=int(round(float(COST_VARIANCE) * 100)),
         step=10,
         format="%d%%",
         help="Range of costs able to be selected from. For example, if average cost is 100 and cost variance is 50%, items in the range of $50 and $150 can be chosen, unless overridden by min/max cost. (DEFAULT 150%)",
@@ -161,7 +197,7 @@ with st.sidebar:
     attempts = st.number_input(
         "Attempts (only change if multiple failures)",
         min_value=1,
-        value=int(module.ATTEMPTS),
+        value=int(ATTEMPTS),
         step=5,
         help="Maximum number of generation attempts before giving up. Only change if it keeps failing. (DEFAULT 1)",
     )
@@ -183,6 +219,8 @@ if "generation_log" not in st.session_state:
     st.session_state.generation_log = ""
 if "current_job_id" not in st.session_state:
     st.session_state.current_job_id = None
+if "generation_failure" not in st.session_state:
+    st.session_state.generation_failure = None
 
 col1, col2 = st.columns(2)
 
@@ -195,9 +233,9 @@ with col1:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                 tmp_csv.write(uploaded_csv.getvalue())
                 csv_path = tmp_csv.name
-            job_id = module.generate_job_id()
+            job_id = generate_job_id()
             st.session_state.current_job_id = job_id
-            module.log_event(
+            log_event(
                 "streamlit_generate_clicked",
                 job_id=job_id,
                 uploaded_filename=uploaded_csv.name,
@@ -213,47 +251,58 @@ with col1:
                 avg_tolerance=float(avg_tolerance),
                 attempts=int(attempts),
                 cost_variance=float(cost_variance),
+                allow_duplicates=allow_duplicates,
                 emails=emails,
             )
-            log_buffer = io.StringIO()
-            with contextlib.redirect_stdout(log_buffer):
-                result = module.generate_random_list(
-                    filename=csv_path,
-                    job_id=job_id,
-                    desired_avg_cost_per_item=float(desired_avg_cost),
-                    num_items=int(num_items),
-                    include_tags=include_tags,
-                    exclude_tags=exclude_tags,
-                    include_types=include_types,
-                    exclude_types=exclude_types,
-                    minimum_cost=float(minimum_cost),
-                    maximum_cost=float(maximum_cost),
-                    count_variance=float(count_variance),
-                    avg_tolerance=float(avg_tolerance),
-                    attempts=int(attempts),
-                    cost_variance=float(cost_variance),
-                    emails=emails,
-                )
-            st.session_state.generation_log = log_buffer.getvalue().strip()
-            st.session_state.result = result
+            result = generate_random_list(
+                filename=csv_path,
+                job_id=job_id,
+                desired_avg_cost_per_item=float(desired_avg_cost),
+                num_items=int(num_items),
+                include_tags=include_tags,
+                exclude_tags=exclude_tags,
+                include_types=include_types,
+                exclude_types=exclude_types,
+                minimum_cost=float(minimum_cost),
+                maximum_cost=float(maximum_cost),
+                count_variance=float(count_variance),
+                avg_tolerance=float(avg_tolerance),
+                attempts=int(attempts),
+                cost_variance=float(cost_variance),
+                allow_duplicates=allow_duplicates,
+                emails=emails,
+            )
+            st.session_state.generation_log = ""
             st.session_state.webhook_sent = False
-            if result:
-                module.log_event("streamlit_generate_succeeded", job_id=job_id)
-                st.success("Run generated.")
+            if picker_results.is_failure_payload(result):
+                st.session_state.result = None
+                st.session_state.generation_failure = result
+                log_event(
+                    "streamlit_generate_failed",
+                    level="error",
+                    job_id=job_id,
+                    reason=result["error"]["code"],
+                )
             else:
-                module.log_event("streamlit_generate_failed", level="error", job_id=job_id)
-                failure_message = st.session_state.generation_log or "Unexpected failure"
-                st.error("No valid list found with the current settings.")
-                st.text(failure_message)
+                st.session_state.result = result
+                st.session_state.generation_failure = None
+                log_event("streamlit_generate_succeeded", job_id=job_id)
+                st.success("Run generated.")
         except Exception as exc:
-            module.log_event(
+            log_event(
                 "streamlit_generate_exception",
                 level="error",
                 job_id=st.session_state.current_job_id,
                 error=str(exc),
             )
             st.session_state.generation_log = f"Generation failed: {exc}"
-            st.error(f"Generation failed: {exc}")
+            st.session_state.generation_failure = picker_results.build_failure_payload(
+                job_id=st.session_state.current_job_id,
+                code="unexpected_exception",
+                message=f"Generation failed: {exc}",
+                details={"error": str(exc)},
+            )
+            st.session_state.result = None
 
 with col2:
     if st.session_state.result:
@@ -267,29 +316,40 @@ with col2:
                 invoice_email,
             )
             st.session_state.result["emails"] = confirm_emails
-            module.log_event("streamlit_confirm_clicked", job_id=job_id)
-            module.log_event(
+            log_event("streamlit_confirm_clicked", job_id=job_id)
+            log_event(
                 "streamlit_confirm_emails_added",
                 job_id=job_id,
                 email_mode=email_mode,
                 emails=confirm_emails,
             )
             try:
-                ok = module.send_to_webhook(st.session_state.result)
-                if ok:
-                    module.log_event("streamlit_confirm_succeeded", job_id=job_id)
+                webhook_result = send_to_webhook(st.session_state.result, webhook_url='http://localhost:5678/webhook/2e518a2e-acc0-4f54-9ce0-986ad0da89eb')  # DELETE WEBHOOK!!!!!!
+                if webhook_result["ok"]:
+                    log_event("streamlit_confirm_succeeded", job_id=job_id)
                     st.session_state.webhook_sent = True
                     st.success("Lists Generated \n\n"
                                "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
 
                 else:
-                    module.log_event("streamlit_confirm_failed", level="error", job_id=job_id)
-                    st.error("Something went wrong. \n\nThe lists may have still generated, check the drive for folder " + st.session_state.result["job_id"])
+                    log_event(
+                        "streamlit_confirm_failed",
+                        level="error",
+                        job_id=job_id,
+                        status_code=webhook_result["status_code"],
+                        error=webhook_result["error"],
+                        response_text=webhook_result["response_text"],
+                    )
+                    st.error(webhook_result["message"] + "\n\nCheck the drive for folder " + st.session_state.result["job_id"])
+                    st.error(webhook_result['error'])
             except Exception as exc:
-                module.log_event("streamlit_confirm_exception", level="error", job_id=job_id, error=str(exc))
+                log_event("streamlit_confirm_exception", level="error", job_id=job_id, error=str(exc))
                 st.error(f"Webhook failed: {exc}")
 
 result = st.session_state.result
+if st.session_state.generation_failure is not None:
+    render_generation_failure(st.session_state.generation_failure)
+
 if result:
     if st.session_state.webhook_sent:
         # st.info("Confirmed")
