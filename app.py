@@ -341,7 +341,6 @@ with col2:
                         response_text=webhook_result["response_text"],
                     )
                     st.error(webhook_result["message"] + "\n\nCheck the drive for folder " + st.session_state.result["job_id"])
-                    st.error(webhook_result['error'])
             except Exception as exc:
                 log_event("streamlit_confirm_exception", level="error", job_id=job_id, error=str(exc))
                 st.error(f"Webhook failed: {exc}")

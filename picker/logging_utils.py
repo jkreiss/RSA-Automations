@@ -41,7 +41,3 @@ def log_event(event, level="info", **context):
     job_id = context.get("job_id") or "unknown_job"
     getattr(get_logger(job_id), level)(json.dumps(payload, default=str, sort_keys=True))
 
-
-def emit_message(message, *, job_id=None, level="info"):
-    print(message, flush=True)
-    log_event("automation_message", level=level, job_id=job_id, message=message)
