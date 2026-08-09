@@ -324,7 +324,7 @@ with col2:
                 emails=confirm_emails,
             )
             try:
-                webhook_result = send_to_webhook(st.session_state.result, webhook_url='http://localhost:5678/webhook/2e518a2e-acc0-4f54-9ce0-986ad0da89eb')  # DELETE WEBHOOK!!!!!!
+                webhook_result = send_to_webhook(st.session_state.result)  # DELETE WEBHOOK!!!!!!
                 if webhook_result["ok"]:
                     log_event("streamlit_confirm_succeeded", job_id=job_id)
                     st.session_state.webhook_sent = True
