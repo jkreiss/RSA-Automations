@@ -1,4 +1,5 @@
 *.csv
+!democsv.csv
 *.json
 .env
 1-out-of-10/

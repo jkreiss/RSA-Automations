@@ -1,4 +1,7 @@
+import json
+import os
 import tempfile
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +24,10 @@ from picker.runs import (
     generate_random_list,
 )
 from picker.webhook import send_to_webhook
+
+
+DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() == "true"
+DEMO_CSV_PATH = Path(__file__).resolve().parent / "democsv.csv"
 
 
 def build_email_payload(mode: str, shared_email: str, pick_email: str, listing_email: str, invoice_email: str):
@@ -72,6 +79,10 @@ def render_generation_failure(failure):
 
 st.set_page_config(page_title="RSA Picker Automation", layout="wide")
 st.title("Mystery Run + Pick, Listing, and Invoice Lists")
+if DEMO_MODE:
+    st.info(
+        "Demo mode just click generate no need to upload, no back end capabilities"
+    )
 with st.expander("Help"):
     st.markdown(
         """
@@ -99,6 +110,12 @@ If it fully breaks or you get unexpected errors, send me a message `kreissjason@
 with st.sidebar:
     st.header("Inputs")
     uploaded_csv = st.file_uploader("FILE", type=["csv"], help="Upload the CSV with stock.")
+    csv_source = uploaded_csv
+    csv_filename = uploaded_csv.name if uploaded_csv is not None else None
+    if csv_source is None and DEMO_MODE and DEMO_CSV_PATH.exists():
+        csv_source = DEMO_CSV_PATH
+        csv_filename = DEMO_CSV_PATH.name
+        st.caption("Using bundled demo file: democsv.csv")
     allow_duplicates = st.toggle(
         "Allow duplicate SKUs",
         value=False,
@@ -226,19 +243,22 @@ col1, col2 = st.columns(2)
 
 with col1:
     if st.button("Generate Run", use_container_width=True):
-        if uploaded_csv is None:
+        if csv_source is None:
             st.warning("Upload a CSV file first.")
             st.stop()
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
-                tmp_csv.write(uploaded_csv.getvalue())
-                csv_path = tmp_csv.name
+            if hasattr(csv_source, "getvalue"):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
+                    tmp_csv.write(csv_source.getvalue())
+                    csv_path = tmp_csv.name
+            else:
+                csv_path = str(csv_source)
             job_id = generate_job_id()
             st.session_state.current_job_id = job_id
             log_event(
                 "streamlit_generate_clicked",
                 job_id=job_id,
-                uploaded_filename=uploaded_csv.name,
+                uploaded_filename=csv_filename,
                 desired_avg_cost_per_item=float(desired_avg_cost),
                 num_items=int(num_items),
                 include_tags=include_tags,
@@ -287,7 +307,7 @@ with col1:
                 st.session_state.result = result
                 st.session_state.generation_failure = None
                 log_event("streamlit_generate_succeeded", job_id=job_id)
-                st.success("Run generated.")
+                st.success('Run generated. \n\nReview the lists below and click "Confirm and generate lists" if they are acceptable')
         except Exception as exc:
             log_event(
                 "streamlit_generate_exception",
@@ -324,12 +344,25 @@ with col2:
                 emails=confirm_emails,
             )
             try:
-                webhook_result = send_to_webhook(st.session_state.result)  # DELETE WEBHOOK!!!!!!
+                if DEMO_MODE:
+                    webhook_result = {
+                        "ok": True,
+                        "job_id": job_id,
+                        "status_code": None,
+                        "message": "Demo mode: lists generated locally only.",
+                        "response_text": "",
+                    }
+
+                else:
+                    webhook_result = send_to_webhook(st.session_state.result)
                 if webhook_result["ok"]:
                     log_event("streamlit_confirm_succeeded", job_id=job_id)
                     st.session_state.webhook_sent = True
-                    st.success("Lists Generated \n\n"
-                               "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
+                    if DEMO_MODE:
+                        st.error("List generation failed. \n\nIs your device still connected to the Tailnet?")
+                    else:
+                        st.success("Lists Generated \n\n"
+                                   "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
 
                 else:
                     log_event(
@@ -354,7 +387,8 @@ if result:
         # st.info("Confirmed")
         pass
     else:
-        st.warning(f"Review the items below, then click 'Confirm and generate lists' if acceptable. \n\n")
+        pass
+        # st.warning(f"Review the items below, then click 'Confirm and generate lists' if acceptable. \n\n")
     st.subheader("Summary")
     if st.session_state.generation_log:
         st.text(st.session_state.generation_log)
