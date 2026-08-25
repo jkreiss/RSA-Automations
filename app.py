@@ -15,11 +15,14 @@ from picker.runs import (
     EXCLUDE_TYPES,
     INCLUDE_TAGS,
     INCLUDE_TYPES,
+    LIMIT_TEAM_DUPLICATES,
     MAXIMUM_COST,
     MINIMUM_COST,
     NUM_ITEMS,
+    TEAM_DUPLICATES_LIMIT,
     generate_random_list,
 )
+from picker.selection import ALL_LEAGUES
 from picker.webhook import send_to_webhook
 
 
@@ -59,6 +62,17 @@ def build_selection_stats_table(stats):
         ("Average Possible For Requested Count", "Yes" if stats["avg_possible_for_requested_count"] else "No"),
     ]
     return pd.DataFrame(rows, columns=["Metric", "Value"])
+
+
+def build_team_counts_table(team_counts):
+    if not team_counts:
+        return None
+
+    rows = [
+        {"Team": team, "Count": count}
+        for team, count in sorted(team_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return pd.DataFrame(rows)
 
 
 def render_generation_failure(failure):
@@ -104,6 +118,32 @@ with st.sidebar:
         value=False,
         help="Allow the same SKU to be selected more than once, capped by Variant Inventory Qty.",
     )
+    limit_team_duplicates = False
+    selected_leagues = None
+    team_duplicates_limit = float(TEAM_DUPLICATES_LIMIT)
+    if allow_duplicates:
+
+        limit_team_duplicates = st.toggle(
+            "Limit team duplicates",
+            value=bool(LIMIT_TEAM_DUPLICATES),
+            help="Limit how many selected items can belong to the same team.",
+        )
+        if limit_team_duplicates:
+            team_duplicates_limit = st.slider(
+                "Team duplicate limit",
+                min_value=0,
+                max_value=100,
+                value=int(round(float(TEAM_DUPLICATES_LIMIT) * 100)),
+                step=1,
+                format="%d%%",
+                help="Max percent of items one team can have in the final list, only current teams",
+            )
+            selected_leagues = st.multiselect(
+                "Leagues",
+                options=ALL_LEAGUES,
+                default=None,
+                help="Only these leagues are used for team duplicate limits and team counts.",
+            )
     email_mode = st.radio(
         "Send lists to email",
         options=["No email", "One email for all lists", "Separate email for each list"],
@@ -252,6 +292,9 @@ with col1:
                 attempts=int(attempts),
                 cost_variance=float(cost_variance),
                 allow_duplicates=allow_duplicates,
+                limit_team_duplicates=limit_team_duplicates,
+                team_duplicates_limit=float(team_duplicates_limit) / 100,
+                leagues=selected_leagues,
                 emails=emails,
             )
             result = generate_random_list(
@@ -270,6 +313,9 @@ with col1:
                 attempts=int(attempts),
                 cost_variance=float(cost_variance),
                 allow_duplicates=allow_duplicates,
+                limit_team_duplicates=limit_team_duplicates,
+                team_duplicates_limit=float(team_duplicates_limit) / 100,
+                leagues=selected_leagues,
                 emails=emails,
             )
             st.session_state.generation_log = ""
@@ -375,3 +421,8 @@ if result:
     st.table(summary_table)
     st.subheader("Selected Items")
     st.dataframe(pd.DataFrame(result["items"]), use_container_width=True)
+    if allow_duplicates:
+        team_counts_table = build_team_counts_table(summary.get("team_counts"))
+        if team_counts_table is not None:
+            st.subheader("Team Counts")
+            st.dataframe(team_counts_table, use_container_width=True, hide_index=True)

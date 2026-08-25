@@ -22,6 +22,8 @@ COST_VARIANCE = 1.5
 ATTEMPTS = 1
 SWAP_TRIES = 800
 RANDOM_SEED = None
+LIMIT_TEAM_DUPLICATES = True
+TEAM_DUPLICATES_LIMIT = 0.05
 N8N_WEBHOOK_URL = DEFAULT_WEBHOOK_URL
 
 
@@ -64,6 +66,9 @@ def generate_random_list(
     job_id=None,
     emails=None,
     allow_duplicates=True,
+    limit_team_duplicates=LIMIT_TEAM_DUPLICATES,
+    team_duplicates_limit=TEAM_DUPLICATES_LIMIT,
+    leagues=None,
 ):
     include_tags = INCLUDE_TAGS if include_tags is None else include_tags
     exclude_tags = EXCLUDE_TAGS if exclude_tags is None else exclude_tags
@@ -91,6 +96,10 @@ def generate_random_list(
         swap_tries=swap_tries,
         seed=seed,
         emails=emails,
+        allow_duplicates=allow_duplicates,
+        limit_team_duplicates=limit_team_duplicates,
+        team_duplicates_limit=team_duplicates_limit,
+        leagues=leagues,
     )
 
     picker_config = PickerConfig(
@@ -109,6 +118,9 @@ def generate_random_list(
         swap_tries=swap_tries,
         seed=seed,
         allow_duplicates=allow_duplicates,
+        limit_team_duplicates=limit_team_duplicates,
+        team_duplicates_limit=team_duplicates_limit,
+        leagues=leagues,
         emails=None,
     )
 
@@ -146,7 +158,12 @@ def generate_random_list(
             stats=stats,
         )
 
-    candidate = results.build_result_from_selection(selection_result, job_id=job_id, emails=emails)
+    candidate = results.build_result_from_selection(
+        selection_result,
+        job_id=job_id,
+        emails=emails,
+        leagues=picker_config.leagues,
+    )
     log_event(
         "automation_succeeded",
         job_id=job_id,

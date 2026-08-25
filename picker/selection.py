@@ -1,7 +1,153 @@
 import random
 from dataclasses import dataclass
+from collections import Counter
 
 import pandas as pd
+
+NFL = [
+    # nfl
+    "Cardinals",
+    "Falcons",
+    "Ravens",
+    "Bills",
+    "Panthers",
+    "Bears",
+    "Bengals",
+    "Browns",
+    "DCowboys",
+    "Broncos",
+    "Lions",
+    "Packers",
+    "Texans",
+    "Colts",
+    "Jaguars",
+    "Chiefs",
+    "Raiders",
+    "Chargers",
+    "Rams",
+    "Dolphins",
+    "Vikings",
+    "Patriots",
+    "Saints",
+    "Giants",
+    "Jets",
+    "Eagles",
+    "Steelers",
+    "49ers",
+    "Seahawks",
+    "Buccaneers",
+    "Titans",
+    "Commanders",]
+NHL = [
+# nhl
+    "Avalanche",
+    "Blackhawks",
+    "Blue Jackets",
+    "Blues",
+    "Bruins",
+    "Canadiens",
+    "Canucks",
+    "Capitals",
+    "Coyotes",
+    "Devils",
+    "Ducks",
+    "Flames",
+    "Flyers",
+    "Golden Knights",
+    "Hurricanes",
+    "Islanders",
+    "Jets",
+    "Kings",
+    "Kraken",
+    "Lightning",
+    "Maple Leafs",
+    "Oilers",
+    "Panthers",
+    "Penguins",
+    "Predators",
+    "Rangers",
+    "Red Wings",
+    "Sabres",
+    "Senators",
+    "Sharks",
+    "Stars",
+    "Wild",
+]
+MLB = [
+# mlb
+    "Angels",
+    "Astros",
+    "Athletics",
+    "Blue Jays",
+    "Braves",
+    "Brewers",
+    "Cardinals",
+    "Cubs",
+    "Diamondbacks",
+    "Dodgers",
+    "Giants",
+    "Guardians",
+    "Mariners",
+    "Marlins",
+    "Mets",
+    "Nationals",
+    "Orioles",
+    "Padres",
+    "Phillies",
+    "Pirates",
+    "Rangers",
+    "Rays",
+    "Red Sox",
+    "Reds",
+    "Rockies",
+    "Royals",
+    "Tigers",
+    "Twins",
+    "White Sox",
+    "Yankees",
+]
+NBA= [
+    # nba
+    "76ers",
+    "Bucks",
+    "Bulls",
+    "Cavaliers",
+    "Celtics",
+    "Clippers",
+    "Grizzlies",
+    "Hawks",
+    "Heat",
+    "Hornets",
+    "Jazz",
+    "Kings",
+    "Knicks",
+    "Lakers",
+    "Magic",
+    "Mavericks",
+    "Nets",
+    "Nuggets",
+    "Pacers",
+    "Pelicans",
+    "Pistons",
+    "Raptors",
+    "Rockets",
+    "Spurs",
+    "Suns",
+    "Thunder",
+    "Timberwolves",
+    "Trail Blazers",
+    "Warriors",
+    "Wizards",
+]
+
+LEAGUE_TEAMS = {
+    "NFL": NFL,
+    "NHL": NHL,
+    "MLB": MLB,
+    "NBA": NBA,
+}
+ALL_LEAGUES = list(LEAGUE_TEAMS)
+TEAMS = [team for league_teams in LEAGUE_TEAMS.values() for team in league_teams]
 
 @dataclass
 class SelectionResult:
@@ -16,6 +162,11 @@ class SelectionResult:
 def select_items(df, config):
     if df.empty:
         return None
+    team_key = team_key_mapper(config)
+    if config.limit_team_duplicates:
+        df = df[df["Tags"].map(team_key).notna()].reset_index(drop=True)
+        if df.empty:
+            return None
 
     df = df.reset_index(drop=True)
     rng = random.Random(config.seed)
@@ -27,6 +178,10 @@ def select_items(df, config):
     max_items = min(available_capacity, requested_max_items)
     low_avg = config.desired_avg_cost_per_item * (1 - config.avg_tolerance)
     high_avg = config.desired_avg_cost_per_item * (1 + config.avg_tolerance)
+
+    #need to make this a dict of the teams then add 1 when its seen and check if its over the limit
+    team_keys = df["Tags"].map(team_key).tolist()
+    team_dict = dict.fromkeys(team_keys, 0)
 
     if min_items > available_capacity:
         return None
@@ -73,17 +228,21 @@ def name_key(title):
 
 
 def initial_selection(df, config, target_count, rng):
+    team_key = team_key_mapper(config)
     # initial selection pseudo random
     if config.allow_duplicates:
         selected_indices = []
         selected_sku_counts = {}
         sku_inventory = inventory_by_sku(df)
+        team_keys = df["Tags"].map(team_key).tolist()
+        selected_team_counts = {}
+        team_limit = team_duplicate_limit_count(config, target_count)
 
         while len(selected_indices) < target_count:
             candidates = [
-                index
-                for index, row in df.iterrows()
+                index for index, row in df.iterrows()
                 if selected_sku_counts.get(row["Variant Sku"], 0) < sku_inventory.get(row["Variant Sku"], 0)
+                and can_add_team(index, team_keys, selected_team_counts, team_limit)
             ]
             if not candidates:
                 break
@@ -91,6 +250,7 @@ def initial_selection(df, config, target_count, rng):
             index = rng.choice(candidates)
             sku = df.iloc[index]["Variant Sku"]
             selected_sku_counts[sku] = selected_sku_counts.get(sku, 0) + 1
+            increment_team_count(index, team_keys, selected_team_counts)
             selected_indices.append(index)
 
         return selected_indices
@@ -101,6 +261,9 @@ def initial_selection(df, config, target_count, rng):
     selected_indices = []
     names_seen = set()
     skus_seen = set()
+    team_keys = df["Tags"].map(team_key).tolist()
+    selected_team_counts = {}
+    team_limit = team_duplicate_limit_count(config, target_count)
 
     for index in order:
         if len(selected_indices) >= target_count:
@@ -113,15 +276,17 @@ def initial_selection(df, config, target_count, rng):
         name = name_key(row["Title"])
         sku = row["Variant Sku"]
 
-        if config.allow_duplicates or (name not in names_seen and sku not in skus_seen):
+        if name not in names_seen and sku not in skus_seen and can_add_team(index, team_keys, selected_team_counts, team_limit):
             names_seen.add(name)
             skus_seen.add(sku)
+            increment_team_count(index, team_keys, selected_team_counts)
             selected_indices.append(index)
 
     return selected_indices
 
 
 def improve_selection(df, config, selected_indices, target_avg, low_avg, high_avg, swap_tries, target_count, rng):
+    team_key = team_key_mapper(config)
     pool_idx = set(range(len(df)))
     if not config.allow_duplicates:
         pool_idx -= set(selected_indices)
@@ -129,6 +294,9 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
     name_keys = df["Title"].map(name_key).tolist()
     skus = df["Variant Sku"].tolist()
     sku_inventory = inventory_by_sku(df)
+    team_keys = df["Tags"].map(team_key).tolist()
+    selected_team_counts = count_selected_teams(selected_indices, team_keys)
+    team_limit = team_duplicate_limit_count(config, target_count)
 
     low_pool = [i for i in pool_idx if costs[i] <= target_avg]
     high_pool = [i for i in pool_idx if costs[i] > target_avg]
@@ -168,6 +336,8 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
                 continue
         elif not can_swap_without_exceeding_inventory(out_i, in_i, skus, selected_sku_counts, sku_inventory):
             continue
+        if not can_swap_without_exceeding_team_limit(out_i, in_i, team_keys, selected_team_counts, team_limit):
+            continue
 
         new_total = total - costs[out_i] + costs[in_i]
         new_avg = new_total / target_count
@@ -191,6 +361,7 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
                 else:
                     selected_sku_counts.pop(skus[out_i], None)
                 selected_sku_counts[skus[in_i]] = selected_sku_counts.get(skus[in_i], 0) + 1
+            update_team_counts_after_swap(out_i, in_i, team_keys, selected_team_counts)
 
             if not config.allow_duplicates:
                 if in_i in low_pool:
@@ -242,6 +413,72 @@ def count_selected_skus(selected_indices, skus):
     return counts
 
 
+def team_duplicate_limit_count(config, target_count):
+    if not config.limit_team_duplicates:
+        return None
+
+    limit = float(config.team_duplicates_limit)
+    if limit > 1:
+        limit = limit / 100
+    if limit <= 0:
+        return 0
+
+    return max(1, int(target_count * limit))
+
+
+def count_selected_teams(selected_indices, team_keys):
+    counts = {}
+    for index in selected_indices:
+        increment_team_count(index, team_keys, counts)
+    return counts
+
+
+def can_add_team(index, team_keys, selected_team_counts, team_limit):
+    if team_limit is None:
+        return True
+
+    team = team_keys[index]
+    if team is None:
+        return True
+
+    return selected_team_counts.get(team, 0) < team_limit
+
+
+def can_swap_without_exceeding_team_limit(out_i, in_i, team_keys, selected_team_counts, team_limit):
+    if team_limit is None:
+        return True
+
+    out_team = team_keys[out_i]
+    in_team = team_keys[in_i]
+    if in_team is None or in_team == out_team:
+        return True
+
+    return selected_team_counts.get(in_team, 0) < team_limit
+
+
+def increment_team_count(index, team_keys, selected_team_counts):
+    team = team_keys[index]
+    if team is not None:
+        selected_team_counts[team] = selected_team_counts.get(team, 0) + 1
+
+
+def update_team_counts_after_swap(out_i, in_i, team_keys, selected_team_counts):
+    out_team = team_keys[out_i]
+    in_team = team_keys[in_i]
+    if out_team == in_team:
+        return
+
+    if out_team is not None:
+        next_count = selected_team_counts.get(out_team, 0) - 1
+        if next_count > 0:
+            selected_team_counts[out_team] = next_count
+        else:
+            selected_team_counts.pop(out_team, None)
+
+    if in_team is not None:
+        selected_team_counts[in_team] = selected_team_counts.get(in_team, 0) + 1
+
+
 def can_swap_without_exceeding_inventory(out_i, in_i, skus, selected_sku_counts, sku_inventory):
     out_sku = skus[out_i]
     in_sku = skus[in_i]
@@ -250,3 +487,42 @@ def can_swap_without_exceeding_inventory(out_i, in_i, skus, selected_sku_counts,
     return selected_sku_counts.get(in_sku, 0) < sku_inventory.get(in_sku, 0)
 
 
+def team_key_mapper(config):
+    leagues = getattr(config, "leagues", None)
+    return lambda tags: team_key_from_tags(tags, leagues)
+
+
+def teams_for_leagues(leagues=None):
+    if leagues is None:
+        return TEAMS
+
+    teams = []
+    for league in leagues:
+        teams.extend(LEAGUE_TEAMS.get(league, []))
+    return teams
+
+
+def selected_leagues_for(leagues=None):
+    if leagues is None:
+        return ALL_LEAGUES
+    return [league for league in leagues if league in LEAGUE_TEAMS]
+
+
+def team_key_from_tags(tags, leagues=None):
+    tag_values = {tag.strip().lower() for tag in str(tags).split(",")}
+
+    selected_leagues = selected_leagues_for(leagues)
+    all_tagged_leagues = [league for league in ALL_LEAGUES if league.lower() in tag_values]
+    tagged_leagues = [league for league in selected_leagues if league.lower() in tag_values]
+    if all_tagged_leagues and not tagged_leagues:
+        return None
+    leagues_to_check = tagged_leagues or selected_leagues
+
+    for league in leagues_to_check:
+        for team in LEAGUE_TEAMS[league]:
+            if team.lower() in tag_values:
+                if tagged_leagues:
+                    return f"{league} - {team}"
+                return team
+
+    return None

@@ -34,6 +34,9 @@ class PickerConfig:
     seed: int | None = None
 
     allow_duplicates: bool = False
+    limit_team_duplicates: bool = False
+    team_duplicates_limit: float = 0.0
+    leagues: list[str] | None = None
 
     emails: EmailConfig | None = field(default_factory=EmailConfig)
 
@@ -58,4 +61,3 @@ class PickerConfig:
             if not self.maximum_cost
             else float(self.maximum_cost)
         )
-
