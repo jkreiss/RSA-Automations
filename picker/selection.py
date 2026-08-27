@@ -163,10 +163,6 @@ def select_items(df, config):
     if df.empty:
         return None
     team_key = team_key_mapper(config)
-    if config.limit_team_duplicates:
-        df = df[df["Tags"].map(team_key).notna()].reset_index(drop=True)
-        if df.empty:
-            return None
 
     df = df.reset_index(drop=True)
     rng = random.Random(config.seed)
@@ -178,10 +174,6 @@ def select_items(df, config):
     max_items = min(available_capacity, requested_max_items)
     low_avg = config.desired_avg_cost_per_item * (1 - config.avg_tolerance)
     high_avg = config.desired_avg_cost_per_item * (1 + config.avg_tolerance)
-
-    #need to make this a dict of the teams then add 1 when its seen and check if its over the limit
-    team_keys = df["Tags"].map(team_key).tolist()
-    team_dict = dict.fromkeys(team_keys, 0)
 
     if min_items > available_capacity:
         return None
@@ -438,7 +430,7 @@ def can_add_team(index, team_keys, selected_team_counts, team_limit):
         return True
 
     team = team_keys[index]
-    if team is None:
+    if is_missing_team_key(team):
         return True
 
     return selected_team_counts.get(team, 0) < team_limit
@@ -450,7 +442,7 @@ def can_swap_without_exceeding_team_limit(out_i, in_i, team_keys, selected_team_
 
     out_team = team_keys[out_i]
     in_team = team_keys[in_i]
-    if in_team is None or in_team == out_team:
+    if is_missing_team_key(in_team) or in_team == out_team:
         return True
 
     return selected_team_counts.get(in_team, 0) < team_limit
@@ -458,7 +450,7 @@ def can_swap_without_exceeding_team_limit(out_i, in_i, team_keys, selected_team_
 
 def increment_team_count(index, team_keys, selected_team_counts):
     team = team_keys[index]
-    if team is not None:
+    if not is_missing_team_key(team):
         selected_team_counts[team] = selected_team_counts.get(team, 0) + 1
 
 
@@ -468,15 +460,19 @@ def update_team_counts_after_swap(out_i, in_i, team_keys, selected_team_counts):
     if out_team == in_team:
         return
 
-    if out_team is not None:
+    if not is_missing_team_key(out_team):
         next_count = selected_team_counts.get(out_team, 0) - 1
         if next_count > 0:
             selected_team_counts[out_team] = next_count
         else:
             selected_team_counts.pop(out_team, None)
 
-    if in_team is not None:
+    if not is_missing_team_key(in_team):
         selected_team_counts[in_team] = selected_team_counts.get(in_team, 0) + 1
+
+
+def is_missing_team_key(team):
+    return team is None or pd.isna(team)
 
 
 def can_swap_without_exceeding_inventory(out_i, in_i, skus, selected_sku_counts, sku_inventory):
@@ -493,7 +489,7 @@ def team_key_mapper(config):
 
 
 def teams_for_leagues(leagues=None):
-    if leagues is None:
+    if not leagues:
         return TEAMS
 
     teams = []
@@ -503,7 +499,7 @@ def teams_for_leagues(leagues=None):
 
 
 def selected_leagues_for(leagues=None):
-    if leagues is None:
+    if not leagues:
         return ALL_LEAGUES
     return [league for league in leagues if league in LEAGUE_TEAMS]
 
