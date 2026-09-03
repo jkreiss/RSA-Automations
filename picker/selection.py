@@ -227,7 +227,6 @@ def initial_selection(df, config, target_count, rng):
         selected_sku_counts = {}
         sku_inventory = inventory_by_sku(df)
         team_keys = df["Tags"].map(team_key).tolist()
-        print(team_keys)
         selected_team_counts = {}
         team_limit = team_duplicate_limit_count(config, target_count)
 
