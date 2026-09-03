@@ -227,6 +227,7 @@ def initial_selection(df, config, target_count, rng):
         selected_sku_counts = {}
         sku_inventory = inventory_by_sku(df)
         team_keys = df["Tags"].map(team_key).tolist()
+        print(team_keys)
         selected_team_counts = {}
         team_limit = team_duplicate_limit_count(config, target_count)
 
@@ -517,8 +518,6 @@ def team_key_from_tags(tags, leagues=None):
     for league in leagues_to_check:
         for team in LEAGUE_TEAMS[league]:
             if team.lower() in tag_values:
-                if tagged_leagues:
-                    return f"{league} - {team}"
                 return team
 
     return None
