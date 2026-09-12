@@ -510,8 +510,14 @@ with col2:
                         )
                         st.session_state.webhook_sent = True
                         st.session_state.editing_selection = False
-                        st.success("Lists Generated \n\n"
-                                   "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
+                        st.success(
+                            f"Lists Generated\n\n"
+                            
+                            "Lists can be found in google drive under: "
+                            f"'RSA Retail/_mystery/_mystery automation/{st.session_state.result['job_id']}'"
+
+                            f"Invoice number: {invoice_id}\n\n"
+                        )
 
                     else:
                         log_event(
