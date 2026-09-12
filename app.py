@@ -1,6 +1,5 @@
 import copy
 import tempfile
-import uuid
 
 import pandas as pd
 import streamlit as st
@@ -8,6 +7,7 @@ import streamlit as st
 from picker import csvhelper, filters, review
 from picker import results as picker_results
 from picker.config import PickerConfig
+from picker.invoice_counter import InvoiceCounterError, ensure_invoice_id
 from picker.logging_utils import generate_job_id, log_event
 from picker.runs import (
     ATTEMPTS,
@@ -472,10 +472,9 @@ with col2:
                 invoice_email,
             )
             st.session_state.result["emails"] = confirm_emails
-            order_export = st.session_state.result.setdefault("order_export", {})
-            if not order_export.get("export_id"):
-                order_export["export_id"] = str(uuid.uuid4())
-            order_export.update(
+            st.session_state.result.pop("order_export", None)
+            invoice_details = st.session_state.result.setdefault("invoice_details", {})
+            invoice_details.update(
                 {
                     "customer_name": "MYSTERY",
                     "store": "manual orders",
@@ -483,34 +482,57 @@ with col2:
                 }
             )
             log_event("streamlit_confirm_clicked", job_id=job_id)
-            log_event(
-                "streamlit_confirm_emails_added",
-                job_id=job_id,
-                email_mode=email_mode,
-                emails=confirm_emails,
-            )
             try:
-                webhook_result = send_to_webhook(st.session_state.result)  # DELETE WEBHOOK!!!!!!
-                if webhook_result["ok"]:
-                    log_event("streamlit_confirm_succeeded", job_id=job_id)
-                    st.session_state.webhook_sent = True
-                    st.session_state.editing_selection = False
-                    st.success("Lists Generated \n\n"
-                               "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
+                invoice_id = ensure_invoice_id(st.session_state.result)
+            except InvoiceCounterError as exc:
+                log_event(
+                    "streamlit_invoice_reservation_failed",
+                    level="error",
+                    job_id=job_id,
+                    error=str(exc),
+                )
+                st.error("Could not reserve an invoice number. Nothing was sent to the webhook.")
+            else:
+                log_event(
+                    "streamlit_confirm_emails_added",
+                    job_id=job_id,
+                    email_mode=email_mode,
+                    emails=confirm_emails,
+                    invoice_id=invoice_id,
+                )
+                try:
+                    webhook_result = send_to_webhook(st.session_state.result)  # DELETE WEBHOOK!!!!!!
+                    if webhook_result["ok"]:
+                        log_event(
+                            "streamlit_confirm_succeeded",
+                            job_id=job_id,
+                            invoice_id=invoice_id,
+                        )
+                        st.session_state.webhook_sent = True
+                        st.session_state.editing_selection = False
+                        st.success("Lists Generated \n\n"
+                                   "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
 
-                else:
+                    else:
+                        log_event(
+                            "streamlit_confirm_failed",
+                            level="error",
+                            job_id=job_id,
+                            invoice_id=invoice_id,
+                            status_code=webhook_result["status_code"],
+                            error=webhook_result["error"],
+                            response_text=webhook_result["response_text"],
+                        )
+                        st.error(webhook_result["message"] + "\n\nCheck the drive for folder " + st.session_state.result["job_id"])
+                except Exception as exc:
                     log_event(
-                        "streamlit_confirm_failed",
+                        "streamlit_confirm_exception",
                         level="error",
                         job_id=job_id,
-                        status_code=webhook_result["status_code"],
-                        error=webhook_result["error"],
-                        response_text=webhook_result["response_text"],
+                        invoice_id=invoice_id,
+                        error=str(exc),
                     )
-                    st.error(webhook_result["message"] + "\n\nCheck the drive for folder " + st.session_state.result["job_id"])
-            except Exception as exc:
-                log_event("streamlit_confirm_exception", level="error", job_id=job_id, error=str(exc))
-                st.error(f"Webhook failed: {exc}")
+                    st.error(f"Webhook failed: {exc}")
 
 result = st.session_state.result
 if st.session_state.generation_failure is not None:

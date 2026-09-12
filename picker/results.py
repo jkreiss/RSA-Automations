@@ -98,8 +98,8 @@ def build_result_payload(selected_df, *, job_id, emails, leagues=None, bag_requi
         "items": build_items(selected_df),
         "summary": build_summary(selected_df, leagues=leagues),
         "bag_requirements": bag_requirements or {"GOLD BAG": 0, "GREEN BAG": 0},
-        "order_export": {
-            "export_id": "",
+        "invoice_details": {
+            "invoice_id": "",
             "customer_name": "MYSTERY",
             "store": "manual orders",
             "price_source": "Variant Price",
