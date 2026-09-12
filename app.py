@@ -514,7 +514,7 @@ with col2:
                             f"Lists Generated\n\n"
                             
                             "Lists can be found in google drive under: "
-                            f"'RSA Retail/_mystery/_mystery automation/{st.session_state.result['job_id']}'"
+                            f"'RSA Retail/_mystery/_mystery automation/{st.session_state.result['job_id']}'\n\n"
 
                             f"Invoice number: {invoice_id}\n\n"
                         )
