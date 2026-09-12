@@ -1,9 +1,13 @@
+import copy
 import tempfile
+import uuid
 
 import pandas as pd
 import streamlit as st
 
+from picker import csvhelper, filters, review
 from picker import results as picker_results
+from picker.config import PickerConfig
 from picker.logging_utils import generate_job_id, log_event
 from picker.runs import (
     ATTEMPTS,
@@ -42,7 +46,7 @@ def build_email_payload(mode: str, shared_email: str, pick_email: str, listing_e
 
 
 def format_money(value):
-    return "" if value is None else f"${value:.2f}"
+    return "" if value is None else f"\${value:.2f}"
 
 
 def build_selection_stats_table(stats):
@@ -53,11 +57,13 @@ def build_selection_stats_table(stats):
         ("Unique Player Titles", stats["unique_players"]),
         ("Unique SKUs", stats["unique_skus"]),
         ("Number of items that can be chosen from", stats["unique_capacity"]),
+        ("Maximum GOLD BAG Items", stats["max_gold_bag_items"]),
+        ("Maximum GREEN BAG Items", stats["max_green_bag_items"]),
         ("Average cost with parameters", format_money(stats["best_possible_avg"])),
         ("Allowed Item Range", f"{stats['min_items']} - {stats['max_items']}"),
-        ("Allowed Average Range", f"${stats['low_avg']:.2f} - ${stats['high_avg']:.2f}"),
+        ("Allowed Average Range", f"\${stats['low_avg']:.2f} - ${stats['high_avg']:.2f}"),
         ("Pool Average Cost", format_money(stats["pool_avg"])),
-        ("Pool Min/Max Costs", f"${stats['pool_min_cost']:.2f} - ${stats['pool_max_cost']:.2f}"),
+        ("Pool Min/Max Costs", f"\${stats['pool_min_cost']:.2f} - ${stats['pool_max_cost']:.2f}"),
         ("Enough Items", "Yes" if stats["count_possible"] else "No"),
         ("Average Possible For Requested Count", "Yes" if stats["avg_possible_for_requested_count"] else "No"),
     ]
@@ -82,18 +88,30 @@ def render_generation_failure(failure):
     if stats_table is not None:
         with st.expander("Selection stats", expanded=True):
             st.table(stats_table)
+    # details = error.get("details") or {}
+    # if details.get("bag_requirements"):
+    #     st.write(
+    #         "Bag requirements:",
+    #         {
+    #             group: {
+    #                 "requested": requested,
+    #                 "available": details.get("bag_availability", {}).get(group, 0),
+    #             }
+    #             for group, requested in details["bag_requirements"].items()
+    #         },
+    #     )
 
 
 st.set_page_config(page_title="RSA Picker Automation", layout="wide")
-st.title("Mystery Run + Pick, Listing, and Invoice Lists")
+st.title("Mystery Run + Pick, Listing, and Order Lists")
 with st.expander("Help"):
     st.markdown(
         """
 **Instructions**
 
-1. Upload a **.csv** file with at least these columns: `Tags`, `Cost Per Item`, `Variant Price`, `Variant Compare At Price`, `Variant Sku`, `Title`.
+1. Upload a **.csv** file with at least these columns: `Tags`, `Cost Per Item`, `Variant Price`, `Variant Compare At Price`, `Variant Sku`, `Variant Inventory Qty`, `Title`, `Type`.
 2. Fill out the input parameters.
-3. Generate the run and review the selection.
+3. Generate the run, click **Edit selected items**, and adjust the selection. You can replace a SKU, change its quantity, delete a row, or add a row before export; product details are refreshed from the uploaded CSV.
 4. Click `Confirm and generate lists` and the lists will appear in Google Drive under `RSA Retail/_mystery/_mystery automation/ Job ID`.
 
 **If it's not working**
@@ -158,7 +176,7 @@ with st.sidebar:
     elif email_mode == "Separate email for each list":
         pick_email = st.text_input("Pick List Email")
         listing_email = st.text_input("Listing List Email")
-        invoice_email = st.text_input("Invoice List Email")
+        invoice_email = st.text_input("Order List Email")
     desired_avg_cost = st.number_input(
         "Average Cost of Item",
         min_value=0.0,
@@ -173,6 +191,32 @@ with st.sidebar:
         step=1,
         help="How many items the generated list should contain on average. (REQUIRED)",
     )
+    gold_bag_enabled = st.toggle(
+        "Require GOLD BAG items",
+        value=False,
+        help="Prioritize at least this many items carrying the exact GOLD BAG tag.",
+    )
+    gold_bag_minimum = 0
+    if gold_bag_enabled:
+        gold_bag_minimum = st.number_input(
+            "Minimum GOLD BAG items",
+            min_value=1,
+            value=1,
+            step=1,
+        )
+    green_bag_enabled = st.toggle(
+        "Require GREEN BAG items",
+        value=False,
+        help="Prioritize at least this many items carrying the exact GREEN BAG tag.",
+    )
+    green_bag_minimum = 0
+    if green_bag_enabled:
+        green_bag_minimum = st.number_input(
+            "Minimum GREEN BAG items",
+            min_value=1,
+            value=1,
+            step=1,
+        )
     include_tags_raw = st.text_input(
         "Include Tags (comma separated)",
         value=", ".join([x for x in INCLUDE_TAGS if x]),
@@ -230,7 +274,7 @@ with st.sidebar:
         value=int(round(float(COST_VARIANCE) * 100)),
         step=10,
         format="%d%%",
-        help="Range of costs able to be selected from. For example, if average cost is 100 and cost variance is 50%, items in the range of $50 and $150 can be chosen, unless overridden by min/max cost. (DEFAULT 150%)",
+        help="Range of costs able to be selected from. For example, if average cost is 100 and cost variance is 50%, items in the range of \$50 and \$150 can be chosen, unless overridden by min/max cost. (DEFAULT 150%)",
     )
     attempts = st.number_input(
         "Attempts (only change if multiple failures)",
@@ -259,6 +303,24 @@ if "current_job_id" not in st.session_state:
     st.session_state.current_job_id = None
 if "generation_failure" not in st.session_state:
     st.session_state.generation_failure = None
+if "editor_rows" not in st.session_state:
+    st.session_state.editor_rows = None
+if "editor_errors" not in st.session_state:
+    st.session_state.editor_errors = []
+if "editor_warnings" not in st.session_state:
+    st.session_state.editor_warnings = []
+if "editor_version" not in st.session_state:
+    st.session_state.editor_version = 0
+if "editing_selection" not in st.session_state:
+    st.session_state.editing_selection = False
+if "selection_edit_snapshot" not in st.session_state:
+    st.session_state.selection_edit_snapshot = None
+if "source_catalog" not in st.session_state:
+    st.session_state.source_catalog = None
+if "review_config" not in st.session_state:
+    st.session_state.review_config = None
+if "allowed_skus" not in st.session_state:
+    st.session_state.allowed_skus = None
 
 col1, col2 = st.columns(2)
 
@@ -293,6 +355,8 @@ with col1:
                 limit_team_duplicates=limit_team_duplicates,
                 team_duplicates_limit=float(team_duplicates_limit) / 100,
                 leagues=selected_leagues,
+                gold_bag_minimum=int(gold_bag_minimum),
+                green_bag_minimum=int(green_bag_minimum),
                 emails=emails,
             )
             result = generate_random_list(
@@ -314,10 +378,14 @@ with col1:
                 limit_team_duplicates=limit_team_duplicates,
                 team_duplicates_limit=float(team_duplicates_limit) / 100,
                 leagues=selected_leagues,
+                gold_bag_minimum=int(gold_bag_minimum),
+                green_bag_minimum=int(green_bag_minimum),
                 emails=emails,
             )
             st.session_state.generation_log = ""
             st.session_state.webhook_sent = False
+            st.session_state.editing_selection = False
+            st.session_state.selection_edit_snapshot = None
             if picker_results.is_failure_payload(result):
                 st.session_state.result = None
                 st.session_state.generation_failure = result
@@ -328,8 +396,47 @@ with col1:
                     reason=result["error"]["code"],
                 )
             else:
+                review_config = PickerConfig(
+                    desired_avg_cost_per_item=float(desired_avg_cost),
+                    num_items=int(num_items),
+                    minimum_cost=float(minimum_cost),
+                    maximum_cost=float(maximum_cost),
+                    include_tags=include_tags,
+                    exclude_tags=exclude_tags,
+                    include_types=include_types,
+                    exclude_types=exclude_types,
+                    count_variance=float(count_variance),
+                    avg_tolerance=float(avg_tolerance),
+                    attempts=int(attempts),
+                    cost_variance=float(cost_variance),
+                    allow_duplicates=allow_duplicates,
+                    limit_team_duplicates=limit_team_duplicates,
+                    team_duplicates_limit=float(team_duplicates_limit) / 100,
+                    leagues=selected_leagues,
+                    gold_bag_minimum=int(gold_bag_minimum),
+                    green_bag_minimum=int(green_bag_minimum),
+                )
+                source_df = csvhelper.load_csv(csv_path)
+                source_catalog = review.build_catalog(source_df)
+                filtered_df = filters.filter_df(source_df.copy(), review_config)
+                initial_editor_rows = review.editor_rows_from_items(result["items"])
+                initial_resolution = review.resolve_editor_rows(initial_editor_rows, source_catalog)
+
                 st.session_state.result = result
                 st.session_state.generation_failure = None
+                st.session_state.source_catalog = source_catalog
+                st.session_state.review_config = review_config
+                st.session_state.allowed_skus = {
+                    review.normalize_sku(sku) for sku in filtered_df["Variant Sku"]
+                }
+                st.session_state.editor_rows = initial_resolution.display_df
+                st.session_state.editor_errors = initial_resolution.errors
+                st.session_state.editor_warnings = review.review_warnings(
+                    initial_resolution.selected_df,
+                    review_config,
+                    st.session_state.allowed_skus,
+                )
+                st.session_state.editor_version += 1
                 log_event("streamlit_generate_succeeded", job_id=job_id)
                 st.success("Run generated.")
         except Exception as exc:
@@ -350,7 +457,12 @@ with col1:
 
 with col2:
     if st.session_state.result:
-        if st.button("Confirm and generate lists", use_container_width=True):
+        export_blocked = bool(st.session_state.editor_errors) or st.session_state.editing_selection
+        if st.button(
+            "Confirm and generate lists",
+            use_container_width=True,
+            disabled=export_blocked or st.session_state.webhook_sent,
+        ):
             job_id = st.session_state.result["job_id"]
             confirm_emails = build_email_payload(
                 email_mode,
@@ -360,6 +472,16 @@ with col2:
                 invoice_email,
             )
             st.session_state.result["emails"] = confirm_emails
+            order_export = st.session_state.result.setdefault("order_export", {})
+            if not order_export.get("export_id"):
+                order_export["export_id"] = str(uuid.uuid4())
+            order_export.update(
+                {
+                    "customer_name": "MYSTERY",
+                    "store": "manual orders",
+                    "price_source": "Variant Price",
+                }
+            )
             log_event("streamlit_confirm_clicked", job_id=job_id)
             log_event(
                 "streamlit_confirm_emails_added",
@@ -372,6 +494,7 @@ with col2:
                 if webhook_result["ok"]:
                     log_event("streamlit_confirm_succeeded", job_id=job_id)
                     st.session_state.webhook_sent = True
+                    st.session_state.editing_selection = False
                     st.success("Lists Generated \n\n"
                                "Lists can be found in google drive under: 'RSA Retail/_mystery/_mystery automation/" + st.session_state.result["job_id"] + "'")
 
@@ -413,12 +536,130 @@ if result:
                 "Total Cost": f"${summary['total_cost']:.2f}",
                 "Average Price": f"${summary['avg_price']:.2f}",
                 "Average Compare Price": f"${summary['avg_compare_price']:.2f}",
+                "GOLD BAG": summary.get("bag_counts", {}).get("GOLD BAG", 0),
+                "GREEN BAG": summary.get("bag_counts", {}).get("GREEN BAG", 0),
+                "No Bag Tag": summary.get("bag_counts", {}).get("UNTAGGED", 0),
             }
         ]
     )
     st.table(summary_table)
-    st.subheader("Selected Items")
-    st.dataframe(pd.DataFrame(result["items"]), use_container_width=True)
+    editor_seed = st.session_state.editor_rows
+    selection_column_config = {
+        "sku": st.column_config.TextColumn("SKU", required=True),
+        "qty": st.column_config.NumberColumn("Quantity", min_value=1, step=1, required=True),
+        "cost": st.column_config.NumberColumn("Cost", format="$%.2f"),
+        "price": st.column_config.NumberColumn("Retail Price", format="$%.2f"),
+        "compare_price": st.column_config.NumberColumn("Compare-at Price", format="$%.2f"),
+        "title": st.column_config.TextColumn("Title", width="large"),
+        "tags": st.column_config.TextColumn("Tags", width="large"),
+        "inventory": st.column_config.NumberColumn("CSV Inventory"),
+        "bag_group": st.column_config.TextColumn("Bag Group"),
+    }
+    title_col, edit_col = st.columns([5, 1])
+    with title_col:
+        st.subheader("Selected Items")
+    with edit_col:
+        if not st.session_state.webhook_sent and not st.session_state.editing_selection:
+            if st.button("Edit selected items", use_container_width=True):
+                st.session_state.selection_edit_snapshot = {
+                    "result": copy.deepcopy(st.session_state.result),
+                    "editor_rows": st.session_state.editor_rows.copy(deep=True),
+                    "editor_errors": list(st.session_state.editor_errors),
+                    "editor_warnings": list(st.session_state.editor_warnings),
+                }
+                st.session_state.editing_selection = True
+                st.session_state.editor_version += 1
+                st.rerun()
+
+    if st.session_state.editing_selection:
+        with st.expander("Help"):
+            st.markdown(
+            """To **add** a new item scroll to the bottom of the list and click on the blank row.  
+             To **delete** an item click the select box beside the sku and press backspace/delete or the trash can in the top right.\n\n"""
+             """To prevent mistakes the list will not update unless all items are valid. If its a bad sku or there is limited quantity you will have to delete the row before you save the changes or cancel.  
+             Changes will NOT be saved if you cancel or refresh you must press 'Done editing'""")
+
+        edited_rows = st.data_editor(
+            editor_seed,
+            key=f"selection_editor_{st.session_state.editor_version}",
+            use_container_width=True,
+            hide_index=True,
+            num_rows="dynamic",
+            disabled=["cost", "price", "compare_price", "title", "tags", "inventory", "bag_group"],
+            column_config=selection_column_config,
+        )
+
+        if review.editable_signature(edited_rows) != review.editable_signature(editor_seed):
+            resolution = review.resolve_editor_rows(edited_rows, st.session_state.source_catalog)
+            st.session_state.editor_rows = resolution.display_df
+            st.session_state.editor_errors = resolution.errors
+            st.session_state.editor_warnings = []
+            if not resolution.errors:
+                previous_result = st.session_state.result
+                st.session_state.result = picker_results.build_result_payload(
+                    resolution.selected_df,
+                    job_id=previous_result["job_id"],
+                    emails=previous_result["emails"],
+                    leagues=st.session_state.review_config.leagues,
+                    bag_requirements=previous_result["bag_requirements"],
+                )
+                st.session_state.editor_warnings = review.review_warnings(
+                    resolution.selected_df,
+                    st.session_state.review_config,
+                    st.session_state.allowed_skus,
+                )
+            st.session_state.webhook_sent = False
+            st.session_state.editor_version += 1
+            log_event(
+                "streamlit_selection_edited",
+                job_id=st.session_state.result["job_id"],
+                errors=st.session_state.editor_errors,
+                warnings=st.session_state.editor_warnings,
+            )
+            st.rerun()
+    else:
+        st.dataframe(
+            editor_seed,
+            use_container_width=True,
+            hide_index=True,
+            column_config=selection_column_config,
+        )
+
+    for error in st.session_state.editor_errors:
+        st.error(error)
+    for warning in st.session_state.editor_warnings:
+        st.warning(warning)
+    if st.session_state.editing_selection:
+        done_col, cancel_col = st.columns(2)
+        with done_col:
+            done_editing = st.button(
+                "Done editing",
+                disabled=bool(st.session_state.editor_errors),
+                use_container_width=True,
+            )
+        with cancel_col:
+            cancel_editing = st.button("Cancel", use_container_width=True)
+
+        if cancel_editing:
+            snapshot = st.session_state.selection_edit_snapshot
+            if snapshot is not None:
+                st.session_state.result = copy.deepcopy(snapshot["result"])
+                st.session_state.editor_rows = snapshot["editor_rows"].copy(deep=True)
+                st.session_state.editor_errors = list(snapshot["editor_errors"])
+                st.session_state.editor_warnings = list(snapshot["editor_warnings"])
+            st.session_state.selection_edit_snapshot = None
+            st.session_state.editing_selection = False
+            st.session_state.editor_version += 1
+            log_event(
+                "streamlit_selection_edit_cancelled",
+                job_id=st.session_state.result["job_id"],
+            )
+            st.rerun()
+        if done_editing:
+            st.session_state.selection_edit_snapshot = None
+            st.session_state.editing_selection = False
+            st.session_state.editor_version += 1
+            st.rerun()
     if limit_team_duplicates:
         team_counts_table = build_team_counts_table(summary.get("team_counts"))
         if team_counts_table is not None:

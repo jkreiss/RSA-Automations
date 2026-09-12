@@ -37,6 +37,8 @@ class PickerConfig:
     limit_team_duplicates: bool = False
     team_duplicates_limit: float = 0.0
     leagues: list[str] | None = None
+    gold_bag_minimum: int = 0
+    green_bag_minimum: int = 0
 
     emails: EmailConfig | None = field(default_factory=EmailConfig)
 

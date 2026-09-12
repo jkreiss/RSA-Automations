@@ -1,10 +1,12 @@
 import random
 from dataclasses import dataclass
-from collections import Counter
 
 import pandas as pd
 
+from picker.bags import GOLD_BAG, GREEN_BAG, bag_group_from_tags, bag_requirements
+
 NFL = [
+    "NCAA",
     # nfl
     "Cardinals",
     "Falcons",
@@ -160,22 +162,22 @@ class SelectionResult:
 
 
 def select_items(df, config):
+    df = in_stock_items(df).reset_index(drop=True)
     if df.empty:
         return None
-    team_key = team_key_mapper(config)
 
-    df = df.reset_index(drop=True)
     rng = random.Random(config.seed)
 
     number_tolerance = max(0, int(round(config.num_items * config.count_variance)))
-    min_items = max(1, config.num_items - number_tolerance)
+    required_bag_count = sum(configured_bag_requirements(config).values())
+    min_items = max(1, config.num_items - number_tolerance, required_bag_count)
     requested_max_items = config.num_items + number_tolerance
     available_capacity = selection_capacity(df, config)
     max_items = min(available_capacity, requested_max_items)
     low_avg = config.desired_avg_cost_per_item * (1 - config.avg_tolerance)
     high_avg = config.desired_avg_cost_per_item * (1 + config.avg_tolerance)
 
-    if min_items > available_capacity:
+    if min_items > max_items:
         return None
 
     for attempt_number in range(1, config.attempts + 1):
@@ -221,6 +223,8 @@ def name_key(title):
 
 def initial_selection(df, config, target_count, rng):
     team_key = team_key_mapper(config)
+    groups = df["Tags"].map(bag_group_from_tags).tolist()
+    requirements = configured_bag_requirements(config)
     # initial selection pseudo random
     if config.allow_duplicates:
         selected_indices = []
@@ -229,6 +233,23 @@ def initial_selection(df, config, target_count, rng):
         team_keys = df["Tags"].map(team_key).tolist()
         selected_team_counts = {}
         team_limit = team_duplicate_limit_count(config, target_count)
+
+        for group in (GOLD_BAG, GREEN_BAG):
+            while count_selected_bags(selected_indices, groups).get(group, 0) < requirements[group]:
+                candidates = [
+                    index for index, row in df.iterrows()
+                    if groups[index] == group
+                    and selected_sku_counts.get(row["Variant Sku"], 0) < sku_inventory.get(row["Variant Sku"], 0)
+                    and can_add_team(index, team_keys, selected_team_counts, team_limit)
+                ]
+                if not candidates:
+                    return []
+
+                index = rng.choice(candidates)
+                sku = df.iloc[index]["Variant Sku"]
+                selected_sku_counts[sku] = selected_sku_counts.get(sku, 0) + 1
+                increment_team_count(index, team_keys, selected_team_counts)
+                selected_indices.append(index)
 
         while len(selected_indices) < target_count:
             candidates = [
@@ -247,15 +268,34 @@ def initial_selection(df, config, target_count, rng):
 
         return selected_indices
 
-    order = list(range(len(df)))
-    rng.shuffle(order)
-
     selected_indices = []
     names_seen = set()
     skus_seen = set()
     team_keys = df["Tags"].map(team_key).tolist()
     selected_team_counts = {}
     team_limit = team_duplicate_limit_count(config, target_count)
+
+    for group in (GOLD_BAG, GREEN_BAG):
+        order = [index for index in range(len(df)) if groups[index] == group]
+        rng.shuffle(order)
+        for index in order:
+            if count_selected_bags(selected_indices, groups).get(group, 0) >= requirements[group]:
+                break
+            row = df.iloc[index]
+            if int(row.get('Variant Inventory Qty', 1)) <= 0:
+                continue
+            name = name_key(row["Title"])
+            sku = row["Variant Sku"]
+            if name not in names_seen and sku not in skus_seen and can_add_team(index, team_keys, selected_team_counts, team_limit):
+                names_seen.add(name)
+                skus_seen.add(sku)
+                increment_team_count(index, team_keys, selected_team_counts)
+                selected_indices.append(index)
+        if count_selected_bags(selected_indices, groups).get(group, 0) < requirements[group]:
+            return []
+
+    order = list(range(len(df)))
+    rng.shuffle(order)
 
     for index in order:
         if len(selected_indices) >= target_count:
@@ -289,6 +329,9 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
     team_keys = df["Tags"].map(team_key).tolist()
     selected_team_counts = count_selected_teams(selected_indices, team_keys)
     team_limit = team_duplicate_limit_count(config, target_count)
+    bag_groups = df["Tags"].map(bag_group_from_tags).tolist()
+    selected_bag_counts = count_selected_bags(selected_indices, bag_groups)
+    requirements = configured_bag_requirements(config)
 
     low_pool = [i for i in pool_idx if costs[i] <= target_avg]
     high_pool = [i for i in pool_idx if costs[i] > target_avg]
@@ -330,6 +373,14 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
             continue
         if not can_swap_without_exceeding_team_limit(out_i, in_i, team_keys, selected_team_counts, team_limit):
             continue
+        if not can_swap_without_violating_bag_minimum(
+            out_i,
+            in_i,
+            bag_groups,
+            selected_bag_counts,
+            requirements,
+        ):
+            continue
 
         new_total = total - costs[out_i] + costs[in_i]
         new_avg = new_total / target_count
@@ -354,6 +405,7 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
                     selected_sku_counts.pop(skus[out_i], None)
                 selected_sku_counts[skus[in_i]] = selected_sku_counts.get(skus[in_i], 0) + 1
             update_team_counts_after_swap(out_i, in_i, team_keys, selected_team_counts)
+            update_bag_counts_after_swap(out_i, in_i, bag_groups, selected_bag_counts)
 
             if not config.allow_duplicates:
                 if in_i in low_pool:
@@ -382,19 +434,68 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
     return selected_indices
 
 
+def in_stock_items(df):
+    return df[df['Variant Inventory Qty'] > 0]
+
+
 def num_unique_items(df):
-    in_stock_df = df[df['Variant Inventory Qty'] > 0]
+    in_stock_df = in_stock_items(df)
     return min(len(in_stock_df), in_stock_df["Title"].map(name_key).nunique(), in_stock_df["Variant Sku"].nunique())
 
 
 def inventory_by_sku(df):
-    return df.groupby("Variant Sku")['Variant Inventory Qty'].max().astype(int).to_dict()
+    in_stock_df = in_stock_items(df)
+    return in_stock_df.groupby("Variant Sku")['Variant Inventory Qty'].max().astype(int).to_dict()
 
 
 def selection_capacity(df, config):
     if config.allow_duplicates:
         return int(sum(inventory_by_sku(df).values()))
     return num_unique_items(df)
+
+
+def configured_bag_requirements(config):
+    return bag_requirements(
+        getattr(config, "gold_bag_minimum", 0),
+        getattr(config, "green_bag_minimum", 0),
+    )
+
+
+def bag_capacity_by_group(df, config):
+    capacities = {}
+    groups = df["Tags"].map(bag_group_from_tags)
+    for group in (GOLD_BAG, GREEN_BAG):
+        group_df = df[groups == group]
+        capacities[group] = selection_capacity(group_df, config) if not group_df.empty else 0
+    return capacities
+
+
+def count_selected_bags(selected_indices, bag_groups):
+    counts = {GOLD_BAG: 0, GREEN_BAG: 0}
+    for index in selected_indices:
+        group = bag_groups[index]
+        if group in counts:
+            counts[group] += 1
+    return counts
+
+
+def can_swap_without_violating_bag_minimum(out_i, in_i, bag_groups, selected_counts, requirements):
+    out_group = bag_groups[out_i]
+    in_group = bag_groups[in_i]
+    if out_group == in_group or out_group not in requirements:
+        return True
+    return selected_counts.get(out_group, 0) > requirements[out_group]
+
+
+def update_bag_counts_after_swap(out_i, in_i, bag_groups, selected_counts):
+    out_group = bag_groups[out_i]
+    in_group = bag_groups[in_i]
+    if out_group == in_group:
+        return
+    if out_group in selected_counts:
+        selected_counts[out_group] -= 1
+    if in_group in selected_counts:
+        selected_counts[in_group] += 1
 
 
 def count_selected_skus(selected_indices, skus):

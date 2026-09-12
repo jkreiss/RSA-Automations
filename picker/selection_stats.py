@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
-from picker.selection import name_key, selection_capacity
+from picker.bags import GOLD_BAG, GREEN_BAG
+from picker.selection import bag_capacity_by_group, in_stock_items, name_key, selection_capacity
 
 
 @dataclass
@@ -8,6 +9,8 @@ class SelectionStats:
     unique_players: int
     unique_skus: int
     unique_capacity: int
+    max_gold_bag_items: int
+    max_green_bag_items: int
     min_items: int
     max_items: int
     low_avg: float
@@ -21,18 +24,22 @@ class SelectionStats:
 
 
 def calculate_selection_stats(df, config):
+    number_tolerance = max(0, int(round(config.num_items * config.count_variance)))
+    min_items = max(1, config.num_items - number_tolerance)
+    requested_max_items = config.num_items + number_tolerance
+    low_avg = config.desired_avg_cost_per_item * (1 - config.avg_tolerance)
+    high_avg = config.desired_avg_cost_per_item * (1 + config.avg_tolerance)
+    df = in_stock_items(df).reset_index(drop=True)
+
     if df.empty:
-        number_tolerance = max(0, int(round(config.num_items * config.count_variance)))
-        min_items = max(1, config.num_items - number_tolerance)
-        max_items = config.num_items + number_tolerance
-        low_avg = config.desired_avg_cost_per_item * (1 - config.avg_tolerance)
-        high_avg = config.desired_avg_cost_per_item * (1 + config.avg_tolerance)
         return SelectionStats(
             unique_players=0,
             unique_skus=0,
             unique_capacity=0,
+            max_gold_bag_items=0,
+            max_green_bag_items=0,
             min_items=min_items,
-            max_items=max_items,
+            max_items=requested_max_items,
             low_avg=low_avg,
             high_avg=high_avg,
             pool_avg=0.0,
@@ -43,29 +50,22 @@ def calculate_selection_stats(df, config):
             avg_possible_for_requested_count=False,
         )
 
-    df = df.reset_index(drop=True)
-    number_tolerance = max(0, int(round(config.num_items * config.count_variance)))
-    min_items = max(1, config.num_items - number_tolerance)
-    requested_max_items = config.num_items + number_tolerance
-    max_items = min(selection_capacity(df, config), requested_max_items)
-    low_avg = config.desired_avg_cost_per_item * (1 - config.avg_tolerance)
-    high_avg = config.desired_avg_cost_per_item * (1 + config.avg_tolerance)
-
-    in_stock_df = df[df['Variant Inventory Qty'] > 0]
-    unique_title_keys = in_stock_df["Title"].map(name_key).nunique()
-    unique_skus = in_stock_df["Variant Sku"].nunique()
+    unique_title_keys = df["Title"].map(name_key).nunique()
+    unique_skus = df["Variant Sku"].nunique()
     unique_capacity = selection_capacity(df, config)
+    max_items = min(unique_capacity, requested_max_items)
+    bag_capacities = bag_capacity_by_group(df, config)
 
     best_unique_df = best_unique_items_by_cost(df, config.num_items)
     best_possible_count = len(best_unique_df)
     best_possible_avg = float(best_unique_df["Cost Per Item"].mean()) if best_possible_count else None
 
-
-
     return SelectionStats(
         unique_players=int(unique_title_keys),
         unique_skus=int(unique_skus),
         unique_capacity=int(unique_capacity),
+        max_gold_bag_items=int(bag_capacities[GOLD_BAG]),
+        max_green_bag_items=int(bag_capacities[GREEN_BAG]),
         min_items=min_items,
         max_items=max_items,
         low_avg=float(low_avg),
