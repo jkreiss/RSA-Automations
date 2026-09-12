@@ -1,5 +1,7 @@
-from picker.config import PickerConfig
 import pandas as pd
+
+from picker.config import PickerConfig
+from picker.selection import matches_selected_leagues
 
 def filter_df(df , config):
     # Tags should be and i.e. if [inhouse, sale] then item must fulfill inhouse AND sale
@@ -35,6 +37,9 @@ def filter_df(df , config):
         for type_val in config.exclude_types:
             if type_val:
                 df = df[~df['Type'].str.contains(type_val, na=False, regex=True)]
+
+    if config.leagues:
+        df = df[df['Tags'].map(lambda tags: matches_selected_leagues(tags, config.leagues))]
 
     # return filtered df between min and max costs
     df = df[df['Cost Per Item'].between(config.resolved_minimum_cost, config.resolved_maximum_cost)]

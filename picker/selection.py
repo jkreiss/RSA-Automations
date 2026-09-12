@@ -605,6 +605,28 @@ def selected_leagues_for(leagues=None):
     return [league for league in leagues if league in LEAGUE_TEAMS]
 
 
+def matches_selected_leagues(tags, leagues=None):
+    if not leagues:
+        return True
+
+    selected_leagues = selected_leagues_for(leagues)
+    if not selected_leagues:
+        return False
+
+    tag_values = {tag.strip().lower() for tag in str(tags).split(",")}
+    explicitly_tagged_leagues = [
+        league for league in ALL_LEAGUES if league.lower() in tag_values
+    ]
+    if explicitly_tagged_leagues:
+        return any(league in selected_leagues for league in explicitly_tagged_leagues)
+
+    return any(
+        team.lower() in tag_values
+        for league in selected_leagues
+        for team in LEAGUE_TEAMS[league]
+    )
+
+
 def team_key_from_tags(tags, leagues=None):
     tag_values = {tag.strip().lower() for tag in str(tags).split(",")}
 

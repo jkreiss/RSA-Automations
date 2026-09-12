@@ -158,7 +158,7 @@ with st.sidebar:
             "Leagues",
             options=ALL_LEAGUES,
             default=None,
-            help="Only these leagues are used for team duplicate limits and team counts.",
+            help="Only items tagged with these leagues or their teams can be selected.",
         )
     email_mode = st.radio(
         "Send lists to email",
