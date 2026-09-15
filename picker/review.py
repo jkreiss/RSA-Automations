@@ -244,13 +244,17 @@ def review_warnings(selected_df, config, allowed_skus=None):
             warnings.append("SKUs outside the generated run's filters: " + ", ".join(outside_filters))
 
     bag_counts = selected_df["Tags"].map(bag_group_from_tags).value_counts().to_dict()
-    for group, minimum in (
-        (GOLD_BAG, config.gold_bag_minimum),
-        (GREEN_BAG, config.green_bag_minimum),
-    ):
-        actual = int(bag_counts.get(group, 0))
-        if actual < minimum:
-            warnings.append(f"{group} count is {actual}; requested minimum is {minimum}.")
+    actual_gold = int(bag_counts.get(GOLD_BAG, 0))
+    if config.gold_bag_minimum > 0 and actual_gold != config.gold_bag_minimum:
+        warnings.append(
+            f"{GOLD_BAG} count is {actual_gold}; requested exact count is {config.gold_bag_minimum}."
+        )
+
+    actual_green = int(bag_counts.get(GREEN_BAG, 0))
+    if actual_green < config.green_bag_minimum:
+        warnings.append(
+            f"{GREEN_BAG} count is {actual_green}; requested minimum is {config.green_bag_minimum}."
+        )
 
     if config.limit_team_duplicates:
         team_keys = selected_df["Tags"].map(team_key_mapper(config)).dropna()

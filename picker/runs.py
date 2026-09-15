@@ -169,7 +169,7 @@ def generate_random_list(
         return fail_run(
             job_id=job_id,
             code="bag_minimum_unavailable",
-            message="The requested GOLD BAG and GREEN BAG minimums cannot be satisfied.",
+            message="The requested exact GOLD BAG count and GREEN BAG minimum cannot be satisfied.",
             details=details,
             stats=selection_stats.calculate_selection_stats(df, picker_config),
         )

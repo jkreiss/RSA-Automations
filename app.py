@@ -192,14 +192,14 @@ with st.sidebar:
         help="How many items the generated list should contain on average. (REQUIRED)",
     )
     gold_bag_enabled = st.toggle(
-        "Require GOLD BAG items",
+        "Set exact GOLD BAG item count",
         value=False,
-        help="Prioritize at least this many items carrying the exact GOLD BAG tag.",
+        help="Select exactly this many items carrying the GOLD BAG tag.",
     )
     gold_bag_minimum = 0
     if gold_bag_enabled:
         gold_bag_minimum = st.number_input(
-            "Minimum GOLD BAG items",
+            "Exact GOLD BAG items",
             min_value=1,
             value=1,
             step=1,

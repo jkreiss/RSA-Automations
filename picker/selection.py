@@ -252,10 +252,12 @@ def initial_selection(df, config, target_count, rng):
                 selected_indices.append(index)
 
         while len(selected_indices) < target_count:
+            selected_bag_counts = count_selected_bags(selected_indices, groups)
             candidates = [
                 index for index, row in df.iterrows()
                 if selected_sku_counts.get(row["Variant Sku"], 0) < sku_inventory.get(row["Variant Sku"], 0)
                 and can_add_team(index, team_keys, selected_team_counts, team_limit)
+                and can_add_bag(groups[index], selected_bag_counts, requirements)
             ]
             if not candidates:
                 break
@@ -308,7 +310,13 @@ def initial_selection(df, config, target_count, rng):
         name = name_key(row["Title"])
         sku = row["Variant Sku"]
 
-        if name not in names_seen and sku not in skus_seen and can_add_team(index, team_keys, selected_team_counts, team_limit):
+        selected_bag_counts = count_selected_bags(selected_indices, groups)
+        if (
+            name not in names_seen
+            and sku not in skus_seen
+            and can_add_team(index, team_keys, selected_team_counts, team_limit)
+            and can_add_bag(groups[index], selected_bag_counts, requirements)
+        ):
             names_seen.add(name)
             skus_seen.add(sku)
             increment_team_count(index, team_keys, selected_team_counts)
@@ -373,7 +381,7 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
             continue
         if not can_swap_without_exceeding_team_limit(out_i, in_i, team_keys, selected_team_counts, team_limit):
             continue
-        if not can_swap_without_violating_bag_minimum(
+        if not can_swap_without_violating_bag_requirements(
             out_i,
             in_i,
             bag_groups,
@@ -479,12 +487,39 @@ def count_selected_bags(selected_indices, bag_groups):
     return counts
 
 
-def can_swap_without_violating_bag_minimum(out_i, in_i, bag_groups, selected_counts, requirements):
+def can_add_bag(group, selected_counts, requirements):
+    """Gold is exact when configured; green remains a minimum."""
+    exact_gold_count = requirements.get(GOLD_BAG, 0)
+    return not (
+        group == GOLD_BAG
+        and exact_gold_count > 0
+        and selected_counts.get(GOLD_BAG, 0) >= exact_gold_count
+    )
+
+
+def can_swap_without_violating_bag_requirements(
+    out_i,
+    in_i,
+    bag_groups,
+    selected_counts,
+    requirements,
+):
     out_group = bag_groups[out_i]
     in_group = bag_groups[in_i]
-    if out_group == in_group or out_group not in requirements:
+    if out_group == in_group:
         return True
-    return selected_counts.get(out_group, 0) > requirements[out_group]
+
+    next_gold_count = selected_counts.get(GOLD_BAG, 0)
+    next_gold_count -= int(out_group == GOLD_BAG)
+    next_gold_count += int(in_group == GOLD_BAG)
+    exact_gold_count = requirements.get(GOLD_BAG, 0)
+    if exact_gold_count > 0 and next_gold_count != exact_gold_count:
+        return False
+
+    next_green_count = selected_counts.get(GREEN_BAG, 0)
+    next_green_count -= int(out_group == GREEN_BAG)
+    next_green_count += int(in_group == GREEN_BAG)
+    return next_green_count >= requirements.get(GREEN_BAG, 0)
 
 
 def update_bag_counts_after_swap(out_i, in_i, bag_groups, selected_counts):
