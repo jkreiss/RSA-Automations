@@ -16,7 +16,7 @@ NFL = [
     "Bears",
     "Bengals",
     "Browns",
-    "DCowboys",
+    "Cowboys",
     "Broncos",
     "Lions",
     "Packers",
