@@ -11,6 +11,13 @@ INVOICE_DB_PATH = Path(
         Path(__file__).resolve().parent.parent / "data" / "invoice_counter.sqlite3",
     )
 ).expanduser()
+EVENT_DB_PATH = Path(
+    os.environ.get(
+        "EVENT_DB_PATH",
+        Path(__file__).resolve().parent.parent / "data" / "event_store.sqlite3",
+    )
+).expanduser()
+
 
 
 @dataclass

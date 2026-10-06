@@ -150,6 +150,18 @@ LEAGUE_TEAMS = {
 }
 ALL_LEAGUES = list(LEAGUE_TEAMS)
 TEAMS = [team for league_teams in LEAGUE_TEAMS.values() for team in league_teams]
+# store tags each item with a sport code; league names are still accepted
+LEAGUE_SPORT_CODES = {
+    "NFL": "FB",
+    "NHL": "HK",
+    "MLB": "BS",
+    "NBA": "BK",
+}
+LEAGUE_TAGS = {
+    league: {league.lower(), code.lower()} for league, code in LEAGUE_SPORT_CODES.items()
+}
+# e.g. Cardinals, Giants, Jets, Panthers, Rangers, Kings
+SHARED_TEAM_NAMES = {team for team in TEAMS if TEAMS.count(team) > 1}
 
 @dataclass
 class SelectionResult:
@@ -649,9 +661,7 @@ def matches_selected_leagues(tags, leagues=None):
         return False
 
     tag_values = {tag.strip().lower() for tag in str(tags).split(",")}
-    explicitly_tagged_leagues = [
-        league for league in ALL_LEAGUES if league.lower() in tag_values
-    ]
+    explicitly_tagged_leagues = tagged_leagues_from_tags(tag_values)
     if explicitly_tagged_leagues:
         return any(league in selected_leagues for league in explicitly_tagged_leagues)
 
@@ -662,12 +672,16 @@ def matches_selected_leagues(tags, leagues=None):
     )
 
 
+def tagged_leagues_from_tags(tag_values):
+    return [league for league in ALL_LEAGUES if LEAGUE_TAGS[league] & tag_values]
+
+
 def team_key_from_tags(tags, leagues=None):
     tag_values = {tag.strip().lower() for tag in str(tags).split(",")}
 
     selected_leagues = selected_leagues_for(leagues)
-    all_tagged_leagues = [league for league in ALL_LEAGUES if league.lower() in tag_values]
-    tagged_leagues = [league for league in selected_leagues if league.lower() in tag_values]
+    all_tagged_leagues = tagged_leagues_from_tags(tag_values)
+    tagged_leagues = [league for league in selected_leagues if league in all_tagged_leagues]
     if all_tagged_leagues and not tagged_leagues:
         return None
     leagues_to_check = tagged_leagues or selected_leagues
@@ -675,6 +689,9 @@ def team_key_from_tags(tags, leagues=None):
     for league in leagues_to_check:
         for team in LEAGUE_TEAMS[league]:
             if team.lower() in tag_values:
+                # keep Arizona and St. Louis Cardinals apart for team limits
+                if team in SHARED_TEAM_NAMES and tagged_leagues:
+                    return f"{team} ({LEAGUE_SPORT_CODES[league]})"
                 return team
 
     return None

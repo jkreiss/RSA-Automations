@@ -1,5 +1,6 @@
 import pandas as pd
 
+from picker.bags import GOLD_BAG, bag_group_from_tags
 from picker.config import PickerConfig
 from picker.selection import matches_selected_leagues
 
@@ -8,21 +9,17 @@ def filter_df(df , config):
     # Type should be or i.e. if [football, jersey] then item must be typed football OR jersey
     # Most likely used with only one type at a time anyway
 
-    if config.include_tags and config.include_types:
-        mask = pd.Series(False, index=df.index)
-        for tag in config.include_tags:
-            mask &= df['Tags'].str.contains(tag, na=False, regex=True)
-        for type_val in config.include_types:
-            mask |= df['Type'].str.contains(type_val, na=False, regex=True)
-        df = df[mask]
+    # Both together: item must have every tag AND match at least one type
 
-    elif config.include_tags:
-        tag_mask = pd.Series(False, index=df.index)
+    if config.include_tags:
+        tag_mask = pd.Series(True, index=df.index)
         for tag in config.include_tags:
+            # NOTE: substring + case-sensitive match, so "NFC" also matches "NFC NORTH"
+            # and "football" won't match "Football"
             tag_mask &= df['Tags'].str.contains(tag, na=False, regex=True)
         df = df[tag_mask]
 
-    elif config.include_types:
+    if config.include_types:
         type_mask = pd.Series(False, index=df.index)
         for type_val in config.include_types:
             type_mask |= df['Type'].str.contains(type_val, na=False, regex=True)
@@ -42,5 +39,10 @@ def filter_df(df , config):
         df = df[df['Tags'].map(lambda tags: matches_selected_leagues(tags, config.leagues))]
 
     # return filtered df between min and max costs
-    df = df[df['Cost Per Item'].between(config.resolved_minimum_cost, config.resolved_maximum_cost)]
+    cost_mask = df['Cost Per Item'].between(config.resolved_minimum_cost, config.resolved_maximum_cost)
+    if config.gold_bag_minimum > 0:
+        # gold bag items may exceed the maximum cost; every other filter still applies
+        is_gold = df['Tags'].map(bag_group_from_tags) == GOLD_BAG
+        cost_mask |= is_gold & (df['Cost Per Item'] >= config.resolved_minimum_cost)
+    df = df[cost_mask]
     return df
