@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-DEFAULT_WEBHOOK_URL = "http://n8n:5678/webhook/f5986e63-7897-4e92-a794-86009334f273"
+DEFAULT_WEBHOOK_URL = "webhook"
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 INVOICE_DB_PATH = Path(
     os.environ.get(
