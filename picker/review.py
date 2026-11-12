@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from picker.bags import GOLD_BAG, GREEN_BAG, bag_group_from_tags
+from picker.bags import GOLD_BAG, GREEN_BAG, bag_group_from_tags, bag_limit_satisfied, bag_maximums, describe_bag_limit
 from picker.selection import name_key, team_duplicate_limit_count, team_key_mapper
 
 
@@ -244,17 +244,19 @@ def review_warnings(selected_df, config, allowed_skus=None):
             warnings.append("SKUs outside the generated run's filters: " + ", ".join(outside_filters))
 
     bag_counts = selected_df["Tags"].map(bag_group_from_tags).value_counts().to_dict()
-    actual_gold = int(bag_counts.get(GOLD_BAG, 0))
-    if config.gold_bag_minimum > 0 and actual_gold != config.gold_bag_minimum:
-        warnings.append(
-            f"{GOLD_BAG} count is {actual_gold}; requested exact count is {config.gold_bag_minimum}."
-        )
-
-    actual_green = int(bag_counts.get(GREEN_BAG, 0))
-    if actual_green < config.green_bag_minimum:
-        warnings.append(
-            f"{GREEN_BAG} count is {actual_green}; requested minimum is {config.green_bag_minimum}."
-        )
+    maximums = bag_maximums(
+        getattr(config, "gold_bag_maximum", None),
+        getattr(config, "green_bag_maximum", None),
+    )
+    for group, minimum in ((GOLD_BAG, config.gold_bag_minimum), (GREEN_BAG, config.green_bag_minimum)):
+        maximum = maximums[group]
+        if minimum <= 0 and maximum is None:
+            continue
+        actual = int(bag_counts.get(group, 0))
+        if not bag_limit_satisfied(actual, minimum, maximum):
+            warnings.append(
+                f"{group} count is {actual}; requested {describe_bag_limit(minimum, maximum)}."
+            )
 
     if config.limit_team_duplicates:
         team_keys = selected_df["Tags"].map(team_key_mapper(config)).dropna()

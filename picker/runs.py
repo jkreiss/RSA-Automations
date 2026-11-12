@@ -1,5 +1,5 @@
 from picker import csvhelper, filters, results, selection, selection_stats
-from picker.bags import GOLD_BAG, GREEN_BAG, bag_requirements
+from picker.bags import GOLD_BAG, GREEN_BAG, bag_limits, bag_maximums, bag_requirements, normalize_bag_maximum
 from picker.config import DEFAULT_WEBHOOK_URL, PickerConfig
 from picker.csvhelper import CSVLoadError
 from picker.logging_utils import generate_job_id, log_event
@@ -72,6 +72,8 @@ def generate_random_list(
     leagues=None,
     gold_bag_minimum=0,
     green_bag_minimum=0,
+    gold_bag_maximum=None,
+    green_bag_maximum=None,
 ):
     include_tags = INCLUDE_TAGS if include_tags is None else include_tags
     exclude_tags = EXCLUDE_TAGS if exclude_tags is None else exclude_tags
@@ -105,6 +107,8 @@ def generate_random_list(
         leagues=leagues,
         gold_bag_minimum=gold_bag_minimum,
         green_bag_minimum=green_bag_minimum,
+        gold_bag_maximum=gold_bag_maximum,
+        green_bag_maximum=green_bag_maximum,
     )
 
     picker_config = PickerConfig(
@@ -128,6 +132,8 @@ def generate_random_list(
         leagues=leagues,
         gold_bag_minimum=max(0, int(gold_bag_minimum or 0)),
         green_bag_minimum=max(0, int(green_bag_minimum or 0)),
+        gold_bag_maximum=normalize_bag_maximum(gold_bag_maximum),
+        green_bag_maximum=normalize_bag_maximum(green_bag_maximum),
         emails=None,
     )
 
@@ -152,6 +158,8 @@ def generate_random_list(
         )
 
     requirements = bag_requirements(gold_bag_minimum, green_bag_minimum)
+    maximums = bag_maximums(gold_bag_maximum, green_bag_maximum)
+    limits = bag_limits(gold_bag_minimum, gold_bag_maximum, green_bag_minimum, green_bag_maximum)
     availability = selection.bag_capacity_by_group(df, picker_config)
     number_tolerance = max(0, int(round(picker_config.num_items * picker_config.count_variance)))
     requested_max_items = picker_config.num_items + number_tolerance
@@ -159,17 +167,19 @@ def generate_random_list(
         group: {"requested": requirements[group], "available": availability[group]}
         for group in (GOLD_BAG, GREEN_BAG)
         if requirements[group] > availability[group]
+        or (maximums[group] is not None and requirements[group] > maximums[group])
     }
     if sum(requirements.values()) > requested_max_items or unavailable:
         details = {
             "bag_requirements": requirements,
+            "bag_limits": limits,
             "bag_availability": availability,
             "maximum_item_count": requested_max_items,
         }
         return fail_run(
             job_id=job_id,
             code="bag_minimum_unavailable",
-            message="The requested exact GOLD BAG count and GREEN BAG minimum cannot be satisfied.",
+            message="The requested GOLD BAG / GREEN BAG counts cannot be satisfied.",
             details=details,
             stats=selection_stats.calculate_selection_stats(df, picker_config),
         )
@@ -181,10 +191,11 @@ def generate_random_list(
             "attempts": attempts,
             "actual_cost_mean": float(df["Cost Per Item"].mean()),
         }
-        if any(requirements.values()):
+        if any(requirements.values()) or any(value is not None for value in maximums.values()):
             failure_details.update(
                 {
                     "bag_requirements": requirements,
+                    "bag_limits": limits,
                     "bag_availability": availability,
                 }
             )
@@ -202,6 +213,7 @@ def generate_random_list(
         emails=emails,
         leagues=picker_config.leagues,
         bag_requirements=requirements,
+        bag_limits=limits,
     )
     log_event(
         "automation_succeeded",

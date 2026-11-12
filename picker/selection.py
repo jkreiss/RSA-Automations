@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from picker.bags import GOLD_BAG, GREEN_BAG, bag_group_from_tags, bag_requirements
+from picker.bags import GOLD_BAG, GREEN_BAG, bag_group_from_tags, bag_maximums, bag_requirements
 
 NFL = [
     "NCAA",
@@ -181,7 +181,11 @@ def select_items(df, config):
     rng = random.Random(config.seed)
 
     number_tolerance = max(0, int(round(config.num_items * config.count_variance)))
-    required_bag_count = sum(configured_bag_requirements(config).values())
+    requirements = configured_bag_requirements(config)
+    maximums = configured_bag_maximums(config)
+    if any(maximums[group] is not None and requirements[group] > maximums[group] for group in requirements):
+        return None
+    required_bag_count = sum(requirements.values())
     min_items = max(1, config.num_items - number_tolerance, required_bag_count)
     requested_max_items = config.num_items + number_tolerance
     available_capacity = selection_capacity(df, config)
@@ -237,6 +241,7 @@ def initial_selection(df, config, target_count, rng):
     team_key = team_key_mapper(config)
     groups = df["Tags"].map(bag_group_from_tags).tolist()
     requirements = configured_bag_requirements(config)
+    maximums = configured_bag_maximums(config)
     # initial selection pseudo random
     if config.allow_duplicates:
         selected_indices = []
@@ -269,7 +274,7 @@ def initial_selection(df, config, target_count, rng):
                 index for index, row in df.iterrows()
                 if selected_sku_counts.get(row["Variant Sku"], 0) < sku_inventory.get(row["Variant Sku"], 0)
                 and can_add_team(index, team_keys, selected_team_counts, team_limit)
-                and can_add_bag(groups[index], selected_bag_counts, requirements)
+                and can_add_bag(groups[index], selected_bag_counts, maximums)
             ]
             if not candidates:
                 break
@@ -327,7 +332,7 @@ def initial_selection(df, config, target_count, rng):
             name not in names_seen
             and sku not in skus_seen
             and can_add_team(index, team_keys, selected_team_counts, team_limit)
-            and can_add_bag(groups[index], selected_bag_counts, requirements)
+            and can_add_bag(groups[index], selected_bag_counts, maximums)
         ):
             names_seen.add(name)
             skus_seen.add(sku)
@@ -352,6 +357,7 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
     bag_groups = df["Tags"].map(bag_group_from_tags).tolist()
     selected_bag_counts = count_selected_bags(selected_indices, bag_groups)
     requirements = configured_bag_requirements(config)
+    maximums = configured_bag_maximums(config)
 
     low_pool = [i for i in pool_idx if costs[i] <= target_avg]
     high_pool = [i for i in pool_idx if costs[i] > target_avg]
@@ -399,6 +405,7 @@ def improve_selection(df, config, selected_indices, target_avg, low_avg, high_av
             bag_groups,
             selected_bag_counts,
             requirements,
+            maximums,
         ):
             continue
 
@@ -481,6 +488,13 @@ def configured_bag_requirements(config):
     )
 
 
+def configured_bag_maximums(config):
+    return bag_maximums(
+        getattr(config, "gold_bag_maximum", None),
+        getattr(config, "green_bag_maximum", None),
+    )
+
+
 def bag_capacity_by_group(df, config):
     capacities = {}
     groups = df["Tags"].map(bag_group_from_tags)
@@ -499,14 +513,10 @@ def count_selected_bags(selected_indices, bag_groups):
     return counts
 
 
-def can_add_bag(group, selected_counts, requirements):
-    """Gold is exact when configured; green remains a minimum."""
-    exact_gold_count = requirements.get(GOLD_BAG, 0)
-    return not (
-        group == GOLD_BAG
-        and exact_gold_count > 0
-        and selected_counts.get(GOLD_BAG, 0) >= exact_gold_count
-    )
+def can_add_bag(group, selected_counts, maximums):
+    """True unless adding this item would push its bag past its maximum."""
+    maximum = maximums.get(group)
+    return maximum is None or selected_counts.get(group, 0) < maximum
 
 
 def can_swap_without_violating_bag_requirements(
@@ -515,23 +525,24 @@ def can_swap_without_violating_bag_requirements(
     bag_groups,
     selected_counts,
     requirements,
+    maximums=None,
 ):
     out_group = bag_groups[out_i]
     in_group = bag_groups[in_i]
     if out_group == in_group:
         return True
 
-    next_gold_count = selected_counts.get(GOLD_BAG, 0)
-    next_gold_count -= int(out_group == GOLD_BAG)
-    next_gold_count += int(in_group == GOLD_BAG)
-    exact_gold_count = requirements.get(GOLD_BAG, 0)
-    if exact_gold_count > 0 and next_gold_count != exact_gold_count:
-        return False
-
-    next_green_count = selected_counts.get(GREEN_BAG, 0)
-    next_green_count -= int(out_group == GREEN_BAG)
-    next_green_count += int(in_group == GREEN_BAG)
-    return next_green_count >= requirements.get(GREEN_BAG, 0)
+    maximums = maximums or {}
+    for group in (GOLD_BAG, GREEN_BAG):
+        next_count = selected_counts.get(group, 0)
+        next_count -= int(out_group == group)
+        next_count += int(in_group == group)
+        if next_count < requirements.get(group, 0):
+            return False
+        maximum = maximums.get(group)
+        if maximum is not None and next_count > maximum:
+            return False
+    return True
 
 
 def update_bag_counts_after_swap(out_i, in_i, bag_groups, selected_counts):

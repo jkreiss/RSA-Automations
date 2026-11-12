@@ -6,6 +6,7 @@ import streamlit as st
 
 from picker import csvhelper, filters, review
 from picker import results as picker_results
+from picker.bags import BAG_MODES, bag_limits_from_mode, describe_bag_limit
 from picker.config import PickerConfig
 from picker.invoice_counter import InvoiceCounterError, ensure_invoice_id
 from picker.logging_utils import generate_job_id, log_event
@@ -81,6 +82,53 @@ def build_team_counts_table(team_counts):
     return pd.DataFrame(rows)
 
 
+def bag_limit_inputs(bag_name, default_mode):
+    """Sidebar controls for one bag; returns (minimum, maximum) with maximum None for no cap."""
+    enabled = st.toggle(
+        f"Set {bag_name} count",
+        value=False,
+        help=f"Control how many items carrying the {bag_name} tag are selected.",
+    )
+    if not enabled:
+        st.caption(f"{bag_name.title()}: any number of items")
+        return 0, None
+
+    mode = st.radio(
+        f"{bag_name} count rule",
+        BAG_MODES,
+        index=BAG_MODES.index(default_mode),
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"{bag_name}_mode",
+        help="Exact: exactly this many. Min/Max: anywhere from the min to the max.",
+    )
+    if mode == "Min/Max":
+        min_col, max_col = st.columns(2)
+        with min_col:
+            count = st.number_input(
+                "Min", min_value=0, value=None, step=1, placeholder="1", key=f"{bag_name}_min"
+            )
+        with max_col:
+            count_max = st.number_input(
+                "Max", min_value=0, value=None, step=1, placeholder="No limit", key=f"{bag_name}_max"
+            )
+        minimum, maximum = bag_limits_from_mode(mode, count, count_max)
+        if count_max is not None and count_max < minimum:
+            st.warning(f"Max is below the min, so it will be treated as exactly {minimum}.")
+    else:
+        count = st.number_input("Exact", min_value=0, value=1, step=1, key=f"{bag_name}_exact")
+        minimum, maximum = bag_limits_from_mode(mode, count)
+
+    st.caption(f"{bag_name.title()}: {bag_limit_summary(minimum, maximum)}")
+    return minimum, maximum
+
+
+def bag_limit_summary(minimum, maximum):
+    items = "item" if (maximum if maximum is not None else minimum) == 1 else "items"
+    summary = f"{describe_bag_limit(minimum, maximum)} {items}"
+    return f"{summary}, no limit" if maximum is None else summary
+
+
 def render_generation_failure(failure):
     error = failure["error"]
     st.error(error["message"])
@@ -131,52 +179,8 @@ If it fully breaks or you get unexpected errors, send me a message `kreissjason@
 with st.sidebar:
     st.header("Inputs")
     uploaded_csv = st.file_uploader("FILE", type=["csv"], help="Upload the CSV with stock.")
-    allow_duplicates = st.toggle(
-        "Allow duplicate SKUs",
-        value=False,
-        help="Allow the same SKU to be selected more than once, capped by Variant Inventory Qty.",
-    )
-    selected_leagues = None
-    team_duplicates_limit = float(TEAM_DUPLICATES_LIMIT)
 
-    limit_team_duplicates = st.toggle(
-        "Limit team duplicates",
-        value=bool(LIMIT_TEAM_DUPLICATES),
-        help="Limit how many selected items can belong to the same team.",
-    )
-    if limit_team_duplicates:
-        team_duplicates_limit = st.slider(
-            "Team duplicate limit",
-            min_value=0,
-            max_value=100,
-            value=int(round(float(TEAM_DUPLICATES_LIMIT) * 100)),
-            step=1,
-            format="%d%%",
-            help="Max percent of items one team can have in the final list, only current teams",
-        )
-        selected_leagues = st.multiselect(
-            "Leagues",
-            options=ALL_LEAGUES,
-            default=None,
-            help="Only items tagged with these leagues or their teams can be selected.",
-        )
-    email_mode = st.radio(
-        "Send lists to email",
-        options=["No email", "One email for all lists", "Separate email for each list"],
-        help="No emails will be sent unless ticked and input box filled in. If 'Separate email for each list' is chosen, only the filled out inputs will be sent.",
-    )
-    shared_email = ""
-    pick_email = ""
-    listing_email = ""
-    invoice_email = ""
-    if email_mode == "One email for all lists":
-        shared_email = st.text_input(
-            "Email",
-        )
-    elif email_mode == "Separate email for each list":
-        pick_email = st.text_input("Pick List Email")
-        listing_email = st.text_input("Listing List Email")
-        invoice_email = st.text_input("Order List Email")
+    st.subheader("Run")
     desired_avg_cost = st.number_input(
         "Average Cost of Item",
         min_value=0.0,
@@ -191,64 +195,111 @@ with st.sidebar:
         step=1,
         help="How many items the generated list should contain on average. (REQUIRED)",
     )
-    gold_bag_enabled = st.toggle(
-        "Set exact GOLD BAG item count",
-        value=False,
-        help="Select exactly this many items carrying the GOLD BAG tag.",
+
+    email_options = ["No email", "One email for all lists", "Separate email for each list"]
+    st.subheader("Emails")
+    email_mode = st.radio(
+        "Send lists to email",
+        options=email_options,
+        key="email_mode",
+        help="No emails will be sent unless ticked and input box filled in. If 'Separate email for each list' is chosen, only the filled out inputs will be sent.",
     )
-    gold_bag_minimum = 0
-    if gold_bag_enabled:
-        gold_bag_minimum = st.number_input(
-            "Exact GOLD BAG items",
-            min_value=1,
-            value=1,
-            step=1,
+    shared_email = ""
+    pick_email = ""
+    listing_email = ""
+    invoice_email = ""
+    if email_mode == "One email for all lists":
+        shared_email = st.text_input(
+            "Email",
         )
-    green_bag_enabled = st.toggle(
-        "Require GREEN BAG items",
+    elif email_mode == "Separate email for each list":
+        pick_email = st.text_input("Pick List Email")
+        listing_email = st.text_input("Listing List Email")
+        invoice_email = st.text_input("Order List Email")
+
+    selected_leagues = None
+    team_duplicates_limit = float(TEAM_DUPLICATES_LIMIT)
+    st.subheader("Duplicates & teams")
+    allow_duplicates = st.toggle(
+        "Allow duplicate SKUs",
         value=False,
-        help="Prioritize at least this many items carrying the exact GREEN BAG tag.",
+        key="allow_duplicates",
+        help="Allow the same SKU to be selected more than once, capped by Variant Inventory Qty.",
     )
-    green_bag_minimum = 0
-    if green_bag_enabled:
-        green_bag_minimum = st.number_input(
-            "Minimum GREEN BAG items",
-            min_value=1,
-            value=1,
+    limit_team_duplicates = st.toggle(
+        "Limit team duplicates",
+        value=bool(LIMIT_TEAM_DUPLICATES),
+        key="limit_team_duplicates",
+        help="Limit how many selected items can belong to the same team.",
+    )
+    if limit_team_duplicates:
+        team_duplicates_limit = st.slider(
+            "Team duplicate limit",
+            min_value=0,
+            max_value=100,
+            value=int(round(float(TEAM_DUPLICATES_LIMIT) * 100)),
             step=1,
+            format="%d%%",
+            key="team_duplicates_limit",
+            help="Max percent of items one team can have in the final list, only current teams",
         )
+        selected_leagues = st.multiselect(
+            "Leagues",
+            options=ALL_LEAGUES,
+            default=None,
+            help="Only items tagged with these leagues or their teams can be selected.",
+        )
+
+    st.subheader("Bags")
+    gold_bag_minimum, gold_bag_maximum = bag_limit_inputs("GOLD BAG", default_mode="Exact")
+    green_bag_minimum, green_bag_maximum = bag_limit_inputs("GREEN BAG", default_mode="Min/Max")
+
+    st.subheader("Filters")
     include_tags_raw = st.text_input(
         "Include Tags (comma separated)",
         value=", ".join([x for x in INCLUDE_TAGS if x]),
+        key="include_tags_raw",
+        placeholder="All tags",
         help="Only items containing at least one of these tags will be included, case sensitive. If left blank ALL are included (DEFAULT all)",
     )
     exclude_tags_raw = st.text_input(
         "Exclude Tags (comma separated)",
         value=", ".join([x for x in EXCLUDE_TAGS if x]),
+        key="exclude_tags_raw",
+        placeholder="None excluded",
         help="Only items containing at least one of these tags will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
     include_types_raw = st.text_input(
         "Include Types (comma separated)",
         value=", ".join([x for x in INCLUDE_TYPES if x]),
+        key="include_types_raw",
+        placeholder="All types",
         help="Only items containing at least one of these types will be included, case sensitive. If left blank ALL are included (DEFAULT all)",
     )
     exclude_types_raw = st.text_input(
         "Exclude Types (comma separated)",
         value=", ".join([x for x in EXCLUDE_TYPES if x]),
+        key="exclude_types_raw",
+        placeholder="None excluded",
         help="Only items containing at least one of these types will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
     minimum_cost = st.number_input(
         "Minimum Cost",
         value=float(MINIMUM_COST),
         step=1.0,
+        key="minimum_cost",
         help="Lowest allowed cost for an individual item. (DEFAULT 0)",
     )
     maximum_cost = st.number_input(
         "Maximum Cost",
         value=float(MAXIMUM_COST),
         step=1.0,
+        key="maximum_cost",
         help="Highest allowed cost for an individual item. (DEFAULT Infinity)",
     )
+
+    st.subheader("Advanced")
+    st.caption("Only change these if runs keep failing.")
     count_variance_percent = st.slider(
         "Count Variance",
         min_value=0,
@@ -274,10 +325,10 @@ with st.sidebar:
         value=int(round(float(COST_VARIANCE) * 100)),
         step=10,
         format="%d%%",
-        help="Range of costs able to be selected from. For example, if average cost is 100 and cost variance is 50%, items in the range of \$50 and \$150 can be chosen, unless overridden by min/max cost. (DEFAULT 150%)",
+        help="Range of costs able to be selected from. For example, if average cost is 100 and cost variance is 50%, items in the range of \\$50 and \\$150 can be chosen, unless overridden by min/max cost. (DEFAULT 150%)",
     )
     attempts = st.number_input(
-        "Attempts (only change if multiple failures)",
+        "Attempts",
         min_value=1,
         value=int(ATTEMPTS),
         step=5,
@@ -325,7 +376,7 @@ if "allowed_skus" not in st.session_state:
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("Generate Run", use_container_width=True):
+    if st.button("Generate Run", type="primary", use_container_width=True):
         if uploaded_csv is None:
             st.warning("Upload a CSV file first.")
             st.stop()
@@ -357,6 +408,8 @@ with col1:
                 leagues=selected_leagues,
                 gold_bag_minimum=int(gold_bag_minimum),
                 green_bag_minimum=int(green_bag_minimum),
+                gold_bag_maximum=gold_bag_maximum,
+                green_bag_maximum=green_bag_maximum,
                 emails=emails,
             )
             result = generate_random_list(
@@ -380,6 +433,8 @@ with col1:
                 leagues=selected_leagues,
                 gold_bag_minimum=int(gold_bag_minimum),
                 green_bag_minimum=int(green_bag_minimum),
+                gold_bag_maximum=gold_bag_maximum,
+                green_bag_maximum=green_bag_maximum,
                 emails=emails,
             )
             st.session_state.generation_log = ""
@@ -415,6 +470,8 @@ with col1:
                     leagues=selected_leagues,
                     gold_bag_minimum=int(gold_bag_minimum),
                     green_bag_minimum=int(green_bag_minimum),
+                    gold_bag_maximum=gold_bag_maximum,
+                    green_bag_maximum=green_bag_maximum,
                 )
                 source_df = csvhelper.load_csv(csv_path)
                 source_catalog = review.build_catalog(source_df)
@@ -460,6 +517,7 @@ with col2:
         export_blocked = bool(st.session_state.editor_errors) or st.session_state.editing_selection
         if st.button(
             "Confirm and generate lists",
+            type="primary",
             use_container_width=True,
             disabled=export_blocked or st.session_state.webhook_sent,
         ):
@@ -630,6 +688,7 @@ if result:
                     emails=previous_result["emails"],
                     leagues=st.session_state.review_config.leagues,
                     bag_requirements=previous_result["bag_requirements"],
+                    bag_limits=previous_result.get("bag_limits"),
                 )
                 st.session_state.editor_warnings = review.review_warnings(
                     resolution.selected_df,
@@ -662,6 +721,7 @@ if result:
         with done_col:
             done_editing = st.button(
                 "Done editing",
+                type="primary",
                 disabled=bool(st.session_state.editor_errors),
                 use_container_width=True,
             )

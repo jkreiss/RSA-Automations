@@ -91,13 +91,18 @@ def build_summary(selected_df, leagues=None):
     }
 
 
-def build_result_payload(selected_df, *, job_id, emails, leagues=None, bag_requirements=None):
+def build_result_payload(selected_df, *, job_id, emails, leagues=None, bag_requirements=None, bag_limits=None):
     return {
         "job_id": job_id,
         "emails": normalize_emails(emails),
         "items": build_items(selected_df),
         "summary": build_summary(selected_df, leagues=leagues),
         "bag_requirements": bag_requirements or {"GOLD BAG": 0, "GREEN BAG": 0},
+        # min/max per bag; max None means no cap
+        "bag_limits": bag_limits or {
+            "GOLD BAG": {"min": 0, "max": None},
+            "GREEN BAG": {"min": 0, "max": None},
+        },
         "invoice_details": {
             "invoice_id": "",
             "customer_name": "MYSTERY",
@@ -107,7 +112,7 @@ def build_result_payload(selected_df, *, job_id, emails, leagues=None, bag_requi
     }
 
 
-def build_result_from_selection(selection_result, *, job_id, emails, leagues=None, bag_requirements=None):
+def build_result_from_selection(selection_result, *, job_id, emails, leagues=None, bag_requirements=None, bag_limits=None):
     if selection_result is None:
         return None
     return build_result_payload(
@@ -116,6 +121,7 @@ def build_result_from_selection(selection_result, *, job_id, emails, leagues=Non
         emails=emails,
         leagues=leagues,
         bag_requirements=bag_requirements,
+        bag_limits=bag_limits,
     )
 
 

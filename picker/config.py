@@ -53,6 +53,9 @@ class PickerConfig:
     leagues: list[str] | None = None
     gold_bag_minimum: int = 0
     green_bag_minimum: int = 0
+    # None = no cap; set equal to the minimum for an exact count
+    gold_bag_maximum: int | None = None
+    green_bag_maximum: int | None = None
 
     emails: EmailConfig | None = field(default_factory=EmailConfig)
 
