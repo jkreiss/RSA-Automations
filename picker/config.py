@@ -39,6 +39,9 @@ class PickerConfig:
 
     minimum_cost: float | None = 0.0
     maximum_cost: float | None = 0.0
+    # retail price (Variant Price) bounds; 0 means no limit
+    minimum_price: float | None = 0.0
+    maximum_price: float | None = 0.0
 
     count_variance: float = 0.0
     avg_tolerance: float = 0.10

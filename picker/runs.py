@@ -16,6 +16,8 @@ EXCLUDE_TYPES = [""]
 
 MINIMUM_COST = 0.0
 MAXIMUM_COST = 0.0
+MINIMUM_PRICE = 0.0
+MAXIMUM_PRICE = 0.0
 
 COUNT_VARIANCE = 0.0
 AVG_TOLERANCE = 0.10
@@ -54,6 +56,8 @@ def generate_random_list(
     num_items=NUM_ITEMS,
     minimum_cost=MINIMUM_COST,
     maximum_cost=MAXIMUM_COST,
+    minimum_price=MINIMUM_PRICE,
+    maximum_price=MAXIMUM_PRICE,
     include_tags=None,
     exclude_tags=None,
     include_types=None,
@@ -90,6 +94,8 @@ def generate_random_list(
         num_items=num_items,
         minimum_cost=minimum_cost,
         maximum_cost=maximum_cost,
+        minimum_price=minimum_price,
+        maximum_price=maximum_price,
         include_tags=include_tags,
         exclude_tags=exclude_tags,
         include_types=include_types,
@@ -116,6 +122,8 @@ def generate_random_list(
         num_items=num_items,
         minimum_cost=minimum_cost,
         maximum_cost=maximum_cost,
+        minimum_price=minimum_price,
+        maximum_price=maximum_price,
         include_tags=[tag for tag in include_tags if tag],
         exclude_tags=[tag for tag in exclude_tags if tag],
         include_types=[type_val for type_val in include_types if type_val],

@@ -45,4 +45,18 @@ def filter_df(df , config):
         is_gold = df['Tags'].map(bag_group_from_tags) == GOLD_BAG
         cost_mask |= is_gold & (df['Cost Per Item'] >= config.resolved_minimum_cost)
     df = df[cost_mask]
+
+    # retail price bounds only apply when set (0 = no limit)
+    min_price = float(config.minimum_price or 0)
+    max_price = float(config.maximum_price or 0)
+    if min_price or max_price:
+        price = df['Variant Price']
+        price_mask = price >= min_price
+        if max_price:
+            below_max = price <= max_price
+            if config.gold_bag_minimum > 0:
+                # gold bag items may exceed the maximum price, same as maximum cost
+                below_max |= df['Tags'].map(bag_group_from_tags) == GOLD_BAG
+            price_mask &= below_max
+        df = df[price_mask]
     return df

@@ -22,7 +22,9 @@ from picker.runs import (
     INCLUDE_TYPES,
     LIMIT_TEAM_DUPLICATES,
     MAXIMUM_COST,
+    MAXIMUM_PRICE,
     MINIMUM_COST,
+    MINIMUM_PRICE,
     NUM_ITEMS,
     TEAM_DUPLICATES_LIMIT,
     generate_random_list,
@@ -283,20 +285,42 @@ with st.sidebar:
         placeholder="None excluded",
         help="Only items containing at least one of these types will be excluded, case sensitive. If left blank NONE are excluded (DEFAULT none)",
     )
-    minimum_cost = st.number_input(
-        "Minimum Cost",
-        value=float(MINIMUM_COST),
-        step=1.0,
-        key="minimum_cost",
-        help="Lowest allowed cost for an individual item. (DEFAULT 0)",
-    )
-    maximum_cost = st.number_input(
-        "Maximum Cost",
-        value=float(MAXIMUM_COST),
-        step=1.0,
-        key="maximum_cost",
-        help="Highest allowed cost for an individual item. (DEFAULT Infinity)",
-    )
+    min_cost_col, max_cost_col = st.columns(2)
+    with min_cost_col:
+        minimum_cost = st.number_input(
+            "Minimum Cost",
+            value=float(MINIMUM_COST),
+            step=1.0,
+            key="minimum_cost",
+            help="Lowest allowed cost for an individual item. (DEFAULT 0)",
+        )
+    with max_cost_col:
+        maximum_cost = st.number_input(
+            "Maximum Cost",
+            value=float(MAXIMUM_COST),
+            step=1.0,
+            key="maximum_cost",
+            help="Highest allowed cost for an individual item. (DEFAULT Infinity)",
+        )
+    min_price_col, max_price_col = st.columns(2)
+    with min_price_col:
+        minimum_price = st.number_input(
+            "Minimum Retail Price",
+            min_value=0.0,
+            value=float(MINIMUM_PRICE),
+            step=1.0,
+            key="minimum_price",
+            help="Lowest allowed retail price (Variant Price) for an individual item. (DEFAULT 0)",
+        )
+    with max_price_col:
+        maximum_price = st.number_input(
+            "Maximum Retail Price",
+            min_value=0.0,
+            value=float(MAXIMUM_PRICE),
+            step=1.0,
+            key="maximum_price",
+            help="Highest allowed retail price (Variant Price) for an individual item. 0 means no limit. (DEFAULT Infinity)",
+        )
 
     st.subheader("Advanced")
     st.caption("Only change these if runs keep failing.")
@@ -398,6 +422,8 @@ with col1:
                 exclude_types=exclude_types,
                 minimum_cost=float(minimum_cost),
                 maximum_cost=float(maximum_cost),
+                minimum_price=float(minimum_price),
+                maximum_price=float(maximum_price),
                 count_variance=float(count_variance),
                 avg_tolerance=float(avg_tolerance),
                 attempts=int(attempts),
@@ -423,6 +449,8 @@ with col1:
                 exclude_types=exclude_types,
                 minimum_cost=float(minimum_cost),
                 maximum_cost=float(maximum_cost),
+                minimum_price=float(minimum_price),
+                maximum_price=float(maximum_price),
                 count_variance=float(count_variance),
                 avg_tolerance=float(avg_tolerance),
                 attempts=int(attempts),
@@ -456,6 +484,8 @@ with col1:
                     num_items=int(num_items),
                     minimum_cost=float(minimum_cost),
                     maximum_cost=float(maximum_cost),
+                    minimum_price=float(minimum_price),
+                    maximum_price=float(maximum_price),
                     include_tags=include_tags,
                     exclude_tags=exclude_tags,
                     include_types=include_types,
